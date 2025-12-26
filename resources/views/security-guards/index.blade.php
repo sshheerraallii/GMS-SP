@@ -7,7 +7,9 @@
     @if(session('success'))
         <div class="alert alert-success">{{ session('success') }}</div>
     @endif
-
+<div class="bg-emerald-600 text-white p-8 text-2xl rounded-xl">
+    Tailwind v4 finally works 🎉
+</div>
     <a href="{{ route('security-guards.create') }}" class="btn btn-success mb-3">Add New Guard</a>
 
     <table class="table table-bordered table-striped">
