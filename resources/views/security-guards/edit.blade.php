@@ -1,213 +1,235 @@
 @extends('layouts.default')
 
-<body>
 @section('content')
-<section class="h-80 bg-dark">
-    <div class="container py-3 h-80">
-        <div class="row d-flex justify-content-center align-items-center h-80">
-            <div class="col">
-                <div class="card card-registration my-4">
-                    <div class="row g-0">
-                        <div class="col-xl-12">
-                            <div class="card-body p-md-5 text-black">
-                                <h3 class="mb-5 text-uppercase">Edit Security Form</h3>
-                                <form method="post" action="{{ route('security-guards.update', $securityGuard->id) }}" enctype="multipart/form-data">
-                                    @csrf
-                                    @method('put')
+<div class="max-w-7xl mx-auto px-6 py-10">
 
-                                    <div class="row">
-                                        <div class="col-md-6 mb-4">
-                                            <input type="text" name="fullname" class="form-control" value="{{ $securityGuard->fullname }}" />
-                                            <label class="form-label">Full Name</label>
-                                        </div>
-                                        <div class="col-md-6 mb-4">
-                                            <input type="email" name="email_address" class="form-control" value="{{ $securityGuard->email_address }}" />
-                                            <label class="form-label">Email Address</label>
-                                        </div>
-                                    </div>
+    <!-- Header -->
+    <div class="mb-8">
+        <h1 class="text-2xl font-semibold text-gray-800">Edit Security Guard</h1>
+        <p class="text-sm text-gray-500">Update guard details and documents</p>
+    </div>
 
-                                    <div class="row">
-                                        <div class="col-md-6 mb-4">
-                                            <input type="text" name="phone_number" class="form-control" value="{{ $securityGuard->phone_number }}" />
-                                            <label class="form-label">Phone Number</label>
-                                        </div>
-                                        <div class="col-md-6 mb-4">
-                                            <input type="text" name="license_number" class="form-control" value="{{ $securityGuard->license_number }}" />
-                                            <label class="form-label">License #</label>
-                                        </div>
-                                    </div>
-
-                                    <div class="row">
-                                        <div class="col-md-6 mb-4">
-                                            <input type="date" name="license_exp_date" class="form-control" value="{{ $securityGuard->license_exp_date }}" />
-                                            <label class="form-label">License Exp Date</label>
-                                        </div>
-                                        <div class="col-md-6 mb-4">
-                                            <select class="form-select" name="category">
-                                                <option selected disabled>Category</option>
-                                                <option value="SIA" {{ $securityGuard->category == 'SIA' ? 'selected' : '' }}>SIA</option>
-                                                <option value="Steward" {{ $securityGuard->category == 'Steward' ? 'selected' : '' }}>Steward</option>
-                                            </select>
-                                        </div>
-                                    </div>
-
-                                    <div class="form-outline mb-4">
-                                        <input type="text" name="adresse" class="form-control" value="{{ $securityGuard->adresse }}" />
-                                        <label class="form-label">Address</label>
-                                    </div>
-
-                                    <div class="row">
-                                        <div class="col-md-6 mb-4">
-                                            <input type="text" name="rtw_share_code" class="form-control" value="{{ $securityGuard->rtw_share_code }}" />
-                                            <label class="form-label">RTW Share Code</label>
-                                        </div>
-                                        <div class="col-md-6 mb-4">
-                                            <select class="form-select" name="visa_status">
-                                                <option selected disabled>Visa Status</option>
-                                                <option value="British" {{ $securityGuard->visa_status == 'British' ? 'selected' : '' }}>British</option>
-                                                <option value="Student" {{ $securityGuard->visa_status == 'Student' ? 'selected' : '' }}>Student</option>
-                                                <option value="PSW" {{ $securityGuard->visa_status == 'PSW' ? 'selected' : '' }}>PSW</option>
-                                                <option value="Dependent" {{ $securityGuard->visa_status == 'Dependent' ? 'selected' : '' }}>Dependent</option>
-                                                <option value="Spouse" {{ $securityGuard->visa_status == 'Spouse' ? 'selected' : '' }}>Spouse</option>
-                                                <option value="ARC" {{ $securityGuard->visa_status == 'ARC' ? 'selected' : '' }}>ARC</option>
-                                            </select>
-                                        </div>
-                                    </div>
-
-                                    <div class="row">
-                                        <div class="col-md-6 mb-4">
-                                            <input type="text" name="ni_number" class="form-control" value="{{ $securityGuard->ni_number }}" />
-                                            <label class="form-label">NI #</label>
-                                        </div>
-                                        <div class="col-md-6 mb-4">
-                                            <select class="form-select" name="driving_license">
-                                                <option selected disabled>Driving License</option>
-                                                <option value="International" {{ $securityGuard->driving_license == 'International' ? 'selected' : '' }}>International</option>
-                                                <option value="UK" {{ $securityGuard->driving_license == 'UK' ? 'selected' : '' }}>UK</option>
-                                                <option value="No" {{ $securityGuard->driving_license == 'No' ? 'selected' : '' }}>No</option>
-                                            </select>
-                                        </div>
-                                    </div>
-
-                                    <div class="row">
-                                        <div class="col-md-6 mb-4">
-                                            <select class="form-select" name="car">
-                                                <option selected disabled>Car</option>
-                                                <option value="Yes" {{ $securityGuard->car == 'Yes' ? 'selected' : '' }}>Yes</option>
-                                                <option value="No" {{ $securityGuard->car == 'No' ? 'selected' : '' }}>No</option>
-                                            </select>
-                                        </div>
-                                        <div class="col-md-6 mb-4">
-                                            <input type="text" name="city" class="form-control" value="{{ $securityGuard->city }}" />
-                                            <label class="form-label">City</label>
-                                        </div>
-                                    </div>
-
-                                    <h5 class="mb-3">Documents</h5>
-                                    <div class="row">
-                                        <div class="col-md-6 mb-3">
-    <label class="form-label" for="profile_picture">Profile Picture</label>
-    @if($securityGuard->profile_picture)
-        <div class="mb-1">
-            <a href="{{ asset('storage/' . $securityGuard->profile_picture) }}" target="_blank">View Current File</a>
+    {{-- Flash / Validation --}}
+    @if(session('success'))
+        <div class="mb-6 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-emerald-900">
+            {{ session('success') }}
         </div>
     @endif
-    <input type="file" name="profile_picture" id="profile_picture" class="form-control" />
-</div>
 
-<div class="col-md-6 mb-3">
-    <label class="form-label" for="sia_license">SIA License</label>
-    @if($securityGuard->sia_license)
-        <div class="mb-1">
-            <a href="{{ asset('storage/' . $securityGuard->sia_license) }}" target="_blank">View Current File</a>
+    @if(session('docs_updated') && count(session('docs_updated')))
+        <div class="mb-6 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-emerald-900">
+            <div class="font-semibold">Updated documents:</div>
+            <ul class="list-disc pl-5 mt-1">
+                @foreach(session('docs_updated') as $f)
+                    <li>{{ ucwords(str_replace('_', ' ', $f)) }}</li>
+                @endforeach
+            </ul>
         </div>
     @endif
-    <input type="file" name="sia_license" id="sia_license" class="form-control" />
-</div>
 
-<div class="col-md-6 mb-3">
-    <label class="form-label" for="driving_license_doc">Driving License Document</label>
-    @if($securityGuard->driving_license_doc)
-        <div class="mb-1">
-            <a href="{{ asset('storage/' . $securityGuard->driving_license_doc) }}" target="_blank">View Current File</a>
+    @if($errors->any())
+        <div class="mb-6 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-red-900">
+            <div class="font-semibold mb-1">Please fix the errors below.</div>
+            <ul class="list-disc pl-5 text-sm">
+                @foreach($errors->all() as $error)
+                    <li>{{ $error }}</li>
+                @endforeach
+            </ul>
         </div>
     @endif
-    <input type="file" name="driving_license_doc" id="driving_license_doc" class="form-control" />
-</div>
 
-<div class="col-md-6 mb-3">
-    <label class="form-label" for="passport">Passport</label>
-    @if($securityGuard->passport)
-        <div class="mb-1">
-            <a href="{{ asset('storage/' . $securityGuard->passport) }}" target="_blank">View Current File</a>
-        </div>
-    @endif
-    <input type="file" name="passport" id="passport" class="form-control" />
-</div>
+    <form method="POST"
+          action="{{ route('security-guards.update', $securityGuard->id) }}"
+          enctype="multipart/form-data"
+          class="space-y-12">
+        @csrf
+        @method('PUT')
 
-<div class="col-md-6 mb-3">
-    <label class="form-label" for="evisa_ss">E-Visa Screenshot</label>
-    @if($securityGuard->evisa_ss)
-        <div class="mb-1">
-            <a href="{{ asset('storage/' . $securityGuard->evisa_ss) }}" target="_blank">View Current File</a>
-        </div>
-    @endif
-    <input type="file" name="evisa_ss" id="evisa_ss" class="form-control" />
-</div>
+        <!-- ================= PERSONAL ================= -->
+        <section class="bg-white rounded-xl shadow p-6">
+            <h2 class="text-lg font-medium mb-6">Personal Information</h2>
 
-<div class="col-md-6 mb-3">
-    <label class="form-label" for="rtw_ss">RTW Screenshot</label>
-    @if($securityGuard->rtw_ss)
-        <div class="mb-1">
-            <a href="{{ asset('storage/' . $securityGuard->rtw_ss) }}" target="_blank">View Current File</a>
-        </div>
-    @endif
-    <input type="file" name="rtw_ss" id="rtw_ss" class="form-control" />
-</div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <x-input label="Full Name" name="fullname" :value="old('fullname', $securityGuard->fullname)" />
+                <x-input label="Email Address" name="email_address" type="email" :value="old('email_address', $securityGuard->email_address)" />
+                <x-input label="Phone Number" name="phone_number" :value="old('phone_number', $securityGuard->phone_number)" />
+                <x-input label="Address" name="adresse" :value="old('adresse', $securityGuard->adresse)" />
+                <x-input label="City" name="city" :value="old('city', $securityGuard->city)" />
+            </div>
+        </section>
 
-<div class="col-md-6 mb-3">
-    <label class="form-label" for="proof_add1">Proof of Address 1</label>
-    @if($securityGuard->proof_add1)
-        <div class="mb-1">
-            <a href="{{ asset('storage/' . $securityGuard->proof_add1) }}" target="_blank">View Current File</a>
-        </div>
-    @endif
-    <input type="file" name="proof_add1" id="proof_add1" class="form-control" />
-</div>
+        <!-- ================= LEGAL ================= -->
+        <section class="bg-white rounded-xl shadow p-6">
+            <h2 class="text-lg font-medium mb-6">License & Legal Status</h2>
 
-<div class="col-md-6 mb-3">
-    <label class="form-label" for="proof_add2">Proof of Address 2</label>
-    @if($securityGuard->proof_add2)
-        <div class="mb-1">
-            <a href="{{ asset('storage/' . $securityGuard->proof_add2) }}" target="_blank">View Current File</a>
-        </div>
-    @endif
-    <input type="file" name="proof_add2" id="proof_add2" class="form-control" />
-</div>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <x-input label="License Number" name="license_number" :value="old('license_number', $securityGuard->license_number)" />
+                <x-input label="License Expiry Date" name="license_exp_date" type="date" :value="old('license_exp_date', $securityGuard->license_exp_date)" />
 
-<div class="col-md-6 mb-3">
-    <label class="form-label" for="ni_letter">NI Letter</label>
-    @if($securityGuard->ni_letter)
-        <div class="mb-1">
-            <a href="{{ asset('storage/' . $securityGuard->ni_letter) }}" target="_blank">View Current File</a>
-        </div>
-    @endif
-    <input type="file" name="ni_letter" id="ni_letter" class="form-control" />
-</div>
+                <x-select label="Category" name="category">
+                    <option value="" disabled>Select</option>
+                    <option value="SIA" @selected(old('category', $securityGuard->category) === 'SIA')>SIA</option>
+                    <option value="Steward" @selected(old('category', $securityGuard->category) === 'Steward')>Steward</option>
+                </x-select>
 
-                                    </div>
+                <x-input label="RTW Share Code" name="rtw_share_code" :value="old('rtw_share_code', $securityGuard->rtw_share_code)" />
+                <x-input label="NI Number" name="ni_number" :value="old('ni_number', $securityGuard->ni_number)" />
 
-                                    <div class="d-flex justify-content-end pt-3">
-                                        <button type="submit" class="btn btn-primary btn-lg ms-2">Update Form</button>
-                                    </div>
+                <x-select label="Visa Status" name="visa_status">
+                    <option value="" disabled>Select</option>
+                    @foreach(['British','Student','PSW','Dependent','Spouse','ARC'] as $status)
+                        <option value="{{ $status }}" @selected(old('visa_status', $securityGuard->visa_status) === $status)>
+                            {{ $status }}
+                        </option>
+                    @endforeach
+                </x-select>
+            </div>
+        </section>
 
-                                </form>
-                            </div>
-                        </div>
-                    </div>
+        <!-- ================= TRANSPORT ================= -->
+        <section class="bg-white rounded-xl shadow p-6">
+            <h2 class="text-lg font-medium mb-6">Transport</h2>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <x-select label="Driving License" name="driving_license">
+                    <option value="" disabled>Select</option>
+                    @foreach(['International','UK','No'] as $opt)
+                        <option value="{{ $opt }}" @selected(old('driving_license', $securityGuard->driving_license) === $opt)>
+                            {{ $opt }}
+                        </option>
+                    @endforeach
+                </x-select>
+
+                <x-select label="Car Ownership" name="car">
+                    <option value="" disabled>Select</option>
+                    <option value="Yes" @selected(old('car', $securityGuard->car) === 'Yes')>Yes</option>
+                    <option value="No" @selected(old('car', $securityGuard->car) === 'No')>No</option>
+                </x-select>
+            </div>
+        </section>
+
+        <!-- ================= BANK DETAILS ================= -->
+        <section class="bg-white rounded-xl shadow p-6">
+            <h2 class="text-lg font-medium mb-6">Bank Details</h2>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
+                    <label class="block text-sm font-medium mb-1">Sort Code</label>
+                    <input type="text"
+                           name="sort_code"
+                           maxlength="6"
+                           value="{{ old('sort_code', $securityGuard->sort_code) }}"
+                           class="w-full border rounded px-3 py-2">
+                    @error('sort_code')
+                        <div class="text-xs text-red-600 mt-1">{{ $message }}</div>
+                    @enderror
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium mb-1">Account Number</label>
+                    <input type="text"
+                           name="account_number"
+                           maxlength="8"
+                           value="{{ old('account_number', $securityGuard->account_number) }}"
+                           class="w-full border rounded px-3 py-2">
+                    @error('account_number')
+                        <div class="text-xs text-red-600 mt-1">{{ $message }}</div>
+                    @enderror
                 </div>
             </div>
+        </section>
+
+        <!-- ================= DOCUMENTS ================= -->
+        <section class="bg-white rounded-xl shadow p-6">
+            <div class="flex items-start justify-between gap-4 mb-6">
+                <div>
+                    <h2 class="text-lg font-medium">Documents</h2>
+                    <p class="text-sm text-gray-500 mt-1">
+                        Upload only what you want to replace. Selected files will overwrite the current ones after you click <span class="font-medium">Update Guard</span>.
+                    </p>
+                </div>
+            </div>
+
+            @php
+                $docs = [
+                    'profile_picture' => 'Profile Picture',
+                    'sia_license' => 'SIA License',
+                    'driving_license_doc' => 'Driving License',
+                    'passport' => 'Passport',
+                    'evisa_ss' => 'E-Visa Screenshot',
+                    'rtw_ss' => 'RTW Screenshot',
+                    'proof_add1' => 'Proof of Address 1',
+                    'proof_add2' => 'Proof of Address 2',
+                    'ni_letter' => 'NI Letter',
+                ];
+            @endphp
+
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                @foreach($docs as $field => $label)
+                    <div class="rounded-lg border border-gray-200 p-4" x-data="{ picked: null }">
+                        <div class="flex items-start justify-between gap-2">
+                            <div>
+                                <div class="text-sm font-medium text-gray-800">{{ $label }}</div>
+
+                                @if($securityGuard->$field)
+                                    <a href="{{ Storage::disk('public')->url($securityGuard->$field) }}"
+                                       target="_blank"
+                                       class="mt-1 inline-block text-xs text-emerald-700 hover:underline">
+                                        View current file
+                                    </a>
+                                @else
+                                    <div class="mt-1 text-xs text-gray-500">No file uploaded yet.</div>
+                                @endif
+                            </div>
+
+                            @if($securityGuard->$field)
+                                <span class="inline-flex items-center rounded-full bg-gray-100 px-2 py-0.5 text-[11px] text-gray-700">
+                                    Current
+                                </span>
+                            @endif
+                        </div>
+
+                        <div class="mt-4">
+                            <label class="block text-xs font-medium text-gray-600 mb-1">Upload new (optional)</label>
+                            <input
+                                type="file"
+                                name="{{ $field }}"
+                                class="block w-full text-sm text-gray-900 border border-gray-300 rounded-lg cursor-pointer bg-white"
+                                @change="picked = $event.target.files?.[0] ? $event.target.files[0].name : null"
+                            />
+
+                            @error($field)
+                                <div class="text-xs text-red-600 mt-2">{{ $message }}</div>
+                            @enderror
+
+                            <template x-if="picked">
+                                <div class="mt-3 rounded-md border border-yellow-200 bg-yellow-50 px-3 py-2 text-xs text-yellow-900">
+                                    <div class="font-semibold">New file selected</div>
+                                    <div class="break-all mt-1" x-text="picked"></div>
+                                    <div class="mt-1 text-yellow-800">
+                                        Will replace current file after you click <span class="font-semibold">Update Guard</span>.
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                @endforeach
+            </div>
+        </section>
+
+        <!-- ================= ACTIONS ================= -->
+        <div class="flex justify-end gap-4">
+            <a href="{{ route('security-guards.index') }}"
+               class="px-6 py-2 rounded-lg border hover:bg-gray-100">
+                Cancel
+            </a>
+
+            <button type="submit"
+                    class="px-8 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700">
+                Update Guard
+            </button>
         </div>
-</section>
+
+    </form>
+</div>
 @endsection
-</body>

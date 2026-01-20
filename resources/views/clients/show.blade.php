@@ -24,10 +24,6 @@
             <span class="font-medium text-gray-700">Payment Terms:</span>
             <span class="text-gray-800">{{ $client->payment_terms }}</span>
         </li>
-        <li class="py-2 flex justify-between">
-            <span class="font-medium text-gray-700">Type:</span>
-            <span class="text-gray-800">{{ $client->type ?? '-' }}</span>
-        </li>
     </ul>
 
     <!-- Back Button -->

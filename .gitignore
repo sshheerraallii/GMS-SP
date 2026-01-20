@@ -3,7 +3,9 @@
 /public/build
 /public/hot
 /public/storage
+/storage/app/public
 /storage/*.key
+/storage/logs
 /vendor
 .env
 .env.backup
