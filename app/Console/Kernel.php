@@ -12,7 +12,13 @@ class Kernel extends ConsoleKernel
      */
     protected function schedule(Schedule $schedule): void
     {
-        // $schedule->command('inspire')->hourly();
+        // Auto-generate draft invoices for ended events (UK time)
+        $schedule->command('invoices:auto-generate')
+            ->dailyAt('00:10')
+            ->timezone('Europe/London')
+            ->withoutOverlapping(30)
+            ->onOneServer()
+            ->runInBackground();
     }
 
     /**

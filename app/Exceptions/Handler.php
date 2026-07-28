@@ -3,7 +3,10 @@
 namespace App\Exceptions;
 
 use Illuminate\Foundation\Exceptions\Handler as ExceptionHandler;
+use Illuminate\Auth\AuthenticationException;
 use Throwable;
+
+use Spatie\Permission\Exceptions\UnauthorizedException;
 
 class Handler extends ExceptionHandler
 {
@@ -23,8 +26,27 @@ class Handler extends ExceptionHandler
      */
     public function register(): void
     {
-        $this->reportable(function (Throwable $e) {
-            //
+        // Spatie permission middleware throws UnauthorizedException.
+        // DO NOT turn it into 404; return proper 403.
+        $this->renderable(function (UnauthorizedException $e, $request) {
+            if ($request->expectsJson()) {
+                return response()->json(['message' => 'Forbidden.'], 403);
+            }
+
+            abort(403);
         });
+    }
+
+    /**
+     * Convert unauthenticated into login redirect (web) or 401 (json).
+     */
+    protected function unauthenticated($request, AuthenticationException $exception)
+    {
+        if ($request->expectsJson()) {
+            return response()->json(['message' => 'Unauthenticated.'], 401);
+        }
+
+        // IMPORTANT: use your actual login route name if different
+        return redirect()->guest(route('login'));
     }
 }

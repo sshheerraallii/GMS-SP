@@ -9,7 +9,9 @@
 
         <!-- Client Name -->
         <div>
-            <label class="block text-gray-700 font-medium mb-1">Client Name <span class="text-red-500">*</span></label>
+            <label class="block text-gray-700 font-medium mb-1">
+                Client Name <span class="text-red-500">*</span>
+            </label>
             <input type="text" name="name" value="{{ old('name') }}"
                    class="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
             @error('name')
@@ -47,25 +49,17 @@
             @enderror
         </div>
 
-        <!-- Client Type -->
-        <div>
-            <label class="block text-gray-700 font-medium mb-1">Client Type <span class="text-red-500">*</span></label>
-            <select name="type" class="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
-                <option value="">Select Type</option>
-                <option value="VAT" {{ old('type') == 'VAT' ? 'selected' : '' }}>VAT</option>
-                <option value="NON-VAT" {{ old('type') == 'NON-VAT' ? 'selected' : '' }}>NON VAT</option>
-            </select>
-            @error('type')
-                <p class="text-red-600 mt-1 text-sm">{{ $message }}</p>
-            @enderror
-        </div>
-
         <!-- Buttons -->
         <div class="flex space-x-3">
             <button type="submit"
-                    class="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-5 py-2 rounded-md transition">Save Client</button>
+                    class="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-5 py-2 rounded-md transition">
+                Save Client
+            </button>
+
             <a href="{{ route('clients.index') }}"
-               class="bg-gray-400 hover:bg-gray-500 text-white font-semibold px-5 py-2 rounded-md transition">Cancel</a>
+               class="bg-gray-400 hover:bg-gray-500 text-white font-semibold px-5 py-2 rounded-md transition">
+                Cancel
+            </a>
         </div>
     </form>
 </div>

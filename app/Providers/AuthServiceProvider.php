@@ -2,8 +2,8 @@
 
 namespace App\Providers;
 
-// use Illuminate\Support\Facades\Gate;
 use Illuminate\Foundation\Support\Providers\AuthServiceProvider as ServiceProvider;
+use Illuminate\Support\Facades\Gate;
 
 class AuthServiceProvider extends ServiceProvider
 {
@@ -13,14 +13,54 @@ class AuthServiceProvider extends ServiceProvider
      * @var array<class-string, class-string>
      */
     protected $policies = [
-        //
+        // Model => Policy mappings (future use)
     ];
 
     /**
-     * Register any authentication / authorization services.
+     * Register authentication / authorization services.
      */
     public function boot(): void
     {
-        //
+        $this->registerPolicies();
+
+        /**
+         * ---------------------------------------------------------
+         * SUPER ADMIN BYPASS
+         * ---------------------------------------------------------
+         * Super Admin can do everything — no exceptions.
+         */
+        Gate::before(function ($user, $ability) {
+            return $user->hasRole('Super Admin') ? true : null;
+        });
+
+        /**
+         * ---------------------------------------------------------
+         * REPORTS
+         * ---------------------------------------------------------
+         * Admins can view reports (Super Admin already allowed)
+         */
+        Gate::define('view-reports', function ($user) {
+            return $user->hasRole('Admin');
+        });
+
+        /**
+         * ---------------------------------------------------------
+         * INVOICES (FINANCIAL / LEGAL)
+         * ---------------------------------------------------------
+         * Only Admins & Super Admins
+         */
+        Gate::define('manage-invoices', function ($user) {
+            return $user->hasRole('Admin');
+        });
+
+        /**
+         * ---------------------------------------------------------
+         * FUTURE EXTENSIONS (placeholders)
+         * ---------------------------------------------------------
+         * Examples:
+         *
+         * Gate::define('manage-payroll', fn ($user) => $user->hasRole('Admin'));
+         * Gate::define('view-audit-logs', fn ($user) => $user->hasRole('Admin'));
+         */
     }
 }

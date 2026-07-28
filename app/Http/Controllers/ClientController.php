@@ -7,40 +7,58 @@ use App\Models\Client;
 
 class ClientController extends Controller
 {
-    // Show all clients
-    public function index()
+    // Show all clients (paginated)
+    public function index(Request $request)
     {
-        $clients = Client::all();
-        return view('clients.index', compact('clients'));
+        $perPage = (int) $request->get('per_page', 20);
+        $perPage = in_array($perPage, [10, 20, 30, 40, 50], true) ? $perPage : 20;
+
+        $q = trim((string) $request->get('q', ''));
+
+        $clientsQuery = Client::query()->orderBy('created_at', 'desc');
+
+        if ($q !== '') {
+            $clientsQuery->where(function ($sub) use ($q) {
+                $sub->where('name', 'like', '%' . $q . '%')
+                    ->orWhere('email_address', 'like', '%' . $q . '%');
+            });
+        }
+
+        $clients = $clientsQuery
+            ->paginate($perPage)
+            ->withQueryString();
+
+        return view('clients.index', compact('clients', 'perPage'));
     }
 
     // Show form to create new client
     public function create()
     {
-        $types = ['Vat', 'Non Vat'];
-        return view('clients.create', compact('types'));
+        return view('clients.create');
     }
 
     // Store new client
     public function store(Request $request)
     {
-        $request->validate([
-            'name' => 'required|string|max:255',
-            'email_address' => 'required|email|unique:clients,email_address',
+        $data = $request->validate([
+            'name'           => 'required|string|max:255',
+            'email_address'  => 'required|email|unique:clients,email_address',
             'contact_number' => 'required|string|max:50',
-            'payment_terms' => 'nullable|string|max:255',
-            'type' => 'required|in:VAT,NON-VAT',
+            'payment_terms'  => 'nullable|string|max:255',
         ]);
 
-        Client::create($request->all());
+        Client::create($data);
 
-        return redirect()->route('clients.index')->with('success', 'Client added successfully');
+        return redirect()
+            ->route('clients.index')
+            ->with('success', 'Client added successfully');
     }
 
     // Show client details
     public function show($id)
     {
-        $client = Client::findOrFail($id); // Throws 404 if not found
+        $client = Client::findOrFail($id);
+
         return view('clients.show', compact('client'));
     }
 
@@ -48,8 +66,8 @@ class ClientController extends Controller
     public function edit($id)
     {
         $client = Client::findOrFail($id);
-        $types = ['Vat', 'Non Vat'];
-        return view('clients.edit', compact('client', 'types'));
+
+        return view('clients.edit', compact('client'));
     }
 
     // Update client
@@ -57,17 +75,18 @@ class ClientController extends Controller
     {
         $client = Client::findOrFail($id);
 
-        $request->validate([
-            'name' => 'required|string|max:255',
-            'email_address' => 'required|email|unique:clients,email_address,' . $client->id,
+        $data = $request->validate([
+            'name'           => 'required|string|max:255',
+            'email_address'  => 'required|email|unique:clients,email_address,' . $client->id,
             'contact_number' => 'required|string|max:50',
-            'payment_terms' => 'nullable|string|max:255',
-            'type' => 'required|in:VAT,NON-VAT',
+            'payment_terms'  => 'nullable|string|max:255',
         ]);
 
-        $client->update($request->all());
+        $client->update($data);
 
-        return redirect()->route('clients.index')->with('success', 'Client updated successfully');
+        return redirect()
+            ->route('clients.index')
+            ->with('success', 'Client updated successfully');
     }
 
     // Delete client
@@ -76,6 +95,8 @@ class ClientController extends Controller
         $client = Client::findOrFail($id);
         $client->delete();
 
-        return redirect()->route('clients.index')->with('success', 'Client deleted successfully');
+        return redirect()
+            ->route('clients.index')
+            ->with('success', 'Client deleted successfully');
     }
 }
