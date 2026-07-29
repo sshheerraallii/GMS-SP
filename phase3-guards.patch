@@ -1,0 +1,187 @@
+diff --git a/app/Http/Controllers/SecurityGuardController.php b/app/Http/Controllers/SecurityGuardController.php
+index ccf5bd9..c17da2f 100644
+--- a/app/Http/Controllers/SecurityGuardController.php
++++ b/app/Http/Controllers/SecurityGuardController.php
+@@ -159,8 +159,8 @@ public function destroy(SecurityGuard $securityGuard)
+ 
+     private function validatedData(Request $request): array
+     {
+-        $isCreate = $request->isMethod('post');
+-        $fileRule = $isCreate ? 'required' : 'nullable';
++        // Phase 3: all guard documents are optional on create and edit.
++        $fileRule = 'nullable';
+ 
+         return $request->validate([
+             'fullname'         => 'required|string|max:255',
+diff --git a/resources/views/security-guards/index.blade.php b/resources/views/security-guards/index.blade.php
+index 841146a..971bc4d 100644
+--- a/resources/views/security-guards/index.blade.php
++++ b/resources/views/security-guards/index.blade.php
+@@ -27,6 +27,7 @@ class="inline-flex items-center justify-center bg-emerald-600 text-white font-se
+         </div>
+     @endif
+ 
++    @can('view-guard-details')
+     {{-- Controls --}}
+     <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-3">
+ 
+@@ -296,6 +297,62 @@ class="bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded-md text-xs trans
+     <div class="mt-6">
+         {{ $securityGuards->links() }}
+     </div>
++    @else
++    {{-- Restricted view (Moderator): Name / Address / Badge / Expiry only --}}
++    <form method="GET" class="mb-4 flex items-center gap-2">
++        <input type="text" name="q" value="{{ request('q') }}"
++               placeholder="Search by name…"
++               class="border rounded px-3 py-2 text-sm w-full sm:w-64">
++        <button type="submit"
++                class="px-4 py-2 rounded-md bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700">
++            Search
++        </button>
++        @if(request('q'))
++            <a href="{{ route('security-guards.index') }}"
++               class="px-3 py-2 rounded-md border text-sm text-gray-600 hover:bg-gray-50">Clear</a>
++        @endif
++    </form>
++
++    <div class="overflow-x-auto rounded-lg border border-gray-200">
++        <table class="min-w-full text-sm">
++            <thead class="bg-gray-100">
++                <tr>
++                    <th class="px-4 py-3 text-left font-semibold">Name</th>
++                    <th class="px-4 py-3 text-left font-semibold">Address</th>
++                    <th class="px-4 py-3 text-left font-semibold">Badge No</th>
++                    <th class="px-4 py-3 text-left font-semibold">Expiry</th>
++                    <th class="px-4 py-3 text-right font-semibold">Actions</th>
++                </tr>
++            </thead>
++            <tbody class="divide-y divide-gray-100">
++                @forelse($securityGuards as $guard)
++                    <tr class="hover:bg-gray-50">
++                        <td class="px-4 py-3 font-medium whitespace-nowrap">{{ $guard->fullname }}</td>
++                        <td class="px-4 py-3">{{ $guard->adresse ?? '-' }}</td>
++                        <td class="px-4 py-3 whitespace-nowrap">{{ $guard->license_number ?? '-' }}</td>
++                        <td class="px-4 py-3 whitespace-nowrap">
++                            {{ $guard->license_exp_date ? \Carbon\Carbon::parse($guard->license_exp_date)->format('d M Y') : '-' }}
++                        </td>
++                        <td class="px-4 py-3 text-right whitespace-nowrap">
++                            <a href="{{ route('security-guards.show', $guard->id) }}"
++                               class="text-emerald-600 hover:underline">View</a>
++                        </td>
++                    </tr>
++                @empty
++                    <tr>
++                        <td colspan="5" class="px-6 py-10 text-center text-gray-500">
++                            No security guards found.
++                        </td>
++                    </tr>
++                @endforelse
++            </tbody>
++        </table>
++    </div>
++
++    <div class="mt-6">
++        {{ $securityGuards->appends(request()->query())->links() }}
++    </div>
++    @endcan
+ 
+ </div>
+ 
+diff --git a/resources/views/security-guards/show.blade.php b/resources/views/security-guards/show.blade.php
+index d829f15..86b9bae 100644
+--- a/resources/views/security-guards/show.blade.php
++++ b/resources/views/security-guards/show.blade.php
+@@ -16,6 +16,7 @@ class="px-4 py-2 rounded-lg border border-gray-300 bg-white text-gray-700 hover:
+             ← Back to list
+         </a>
+ 
++        @can('view-guard-details')
+         <button type="button"
+                 id="openCustomPdfModal"
+                 class="px-4 py-2 rounded-lg border border-blue-300 bg-blue-50 text-blue-700 hover:bg-blue-100">
+@@ -27,6 +28,7 @@ class="px-4 py-2 rounded-lg border border-blue-300 bg-blue-50 text-blue-700 hove
+            class="px-4 py-2 rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100">
+             Full PDF
+         </a>
++        @endcan
+     </div>
+ </div>
+ 
+@@ -40,6 +42,7 @@ class="px-4 py-2 rounded-lg border border-emerald-300 bg-emerald-50 text-emerald
+     
+ 
+     <!-- Card -->
++    @can('view-guard-details')
+     <div class="bg-white rounded-xl shadow p-6 space-y-8">
+ 
+         <!-- Basic Info -->
+@@ -103,7 +106,21 @@ class="px-4 py-2 rounded-lg border border-emerald-300 bg-emerald-50 text-emerald
+ 
+         <!-- Documents -->
+         <div>
+-            <h3 class="text-lg font-semibold mb-4 border-b pb-2">Documents</h3>
++            @php
++                $requiredDocs = [
++                    'profile_picture','sia_license','sia_license_back','driving_license_doc','passport',
++                    'evisa_ss','rtw_ss','proof_add1','proof_add2','ni_letter',
++                ];
++                $missingRequired = collect($requiredDocs)->filter(fn ($f) => empty($securityGuard->$f))->count();
++            @endphp
++            <h3 class="text-lg font-semibold mb-4 border-b pb-2 flex items-center">
++                <span>Documents</span>
++                @if($missingRequired > 0)
++                    <span class="ml-2 inline-flex items-center rounded-full bg-red-100 text-red-700 text-xs font-medium px-2 py-0.5">
++                        {{ $missingRequired }} required missing
++                    </span>
++                @endif
++            </h3>
+ 
+             <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 text-sm">
+ 
+@@ -115,7 +132,7 @@ class="px-4 py-2 rounded-lg border border-emerald-300 bg-emerald-50 text-emerald
+                             src="{{ asset('storage/'.$securityGuard->profile_picture) }}"
+                             class="mx-auto h-32 w-32 rounded-full object-cover border">
+                     @else
+-                        <p class="text-gray-400">Not uploaded</p>
++                        <span class="inline-flex items-center rounded-full bg-red-100 text-red-700 text-xs font-medium px-2 py-0.5">Missing</span>
+                     @endif
+                 </div>
+ 
+@@ -155,6 +172,8 @@ class="mx-auto h-32 w-32 rounded-full object-cover border">
+                                class="text-emerald-600 hover:underline">
+                                 View Document
+                             </a>
++                        @elseif(in_array($field, $requiredDocs))
++                            <span class="inline-flex items-center self-start rounded-full bg-red-100 text-red-700 text-xs font-medium px-2 py-0.5">Missing</span>
+                         @else
+                             <p class="text-gray-400">Not uploaded</p>
+                         @endif
+@@ -193,8 +212,20 @@ class="px-4 py-2 rounded-lg border text-red-600 hover:bg-red-50">
+ 
+ 
+     </div>
++    @else
++    <!-- Restricted view (Moderator): Name / Address / Badge / Expiry only -->
++    <div class="bg-white rounded-xl shadow p-6">
++        <h2 class="text-xl font-semibold mb-4">{{ $securityGuard->fullname }}</h2>
++        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
++            <div><span class="font-medium">Address:</span> {{ $securityGuard->adresse ?? '-' }}</div>
++            <div><span class="font-medium">Badge No:</span> {{ $securityGuard->license_number ?? '-' }}</div>
++            <div><span class="font-medium">Expiry:</span> {{ $securityGuard->license_exp_date ? \Carbon\Carbon::parse($securityGuard->license_exp_date)->format('d M Y') : '-' }}</div>
++        </div>
++    </div>
++    @endcan
+ </div>
+ 
++@can('view-guard-details')
+ <div id="customPdfModal" style="display:none; position:fixed; inset:0; z-index:9999;">
+     <div id="customPdfBackdrop" style="position:absolute; inset:0; background:rgba(0,0,0,.55);"></div>
+ 
+@@ -380,4 +411,6 @@ function closeModal() {
+ 
+ 
+ 
++@endcan
++
+ @endsection

@@ -54,16 +54,18 @@
                     Guards
                 </a>
 
+                @can('clients.view')
                 <a href="{{ route('clients.index') }}"
                    class="{{ $navBase }} {{ request()->routeIs('clients.*') ? $active : $idle }}">
                     Clients
                 </a>
+                @endcan
 
                 <a href="{{ route('events.index') }}"
                    class="{{ $navBase }} {{ request()->routeIs('events.*') ? $active : $idle }}">
                     Events
                 </a>
-@can('viewReports')
+@can('view-reports')
     <a href="{{ route('reports.home') }}"
        class="{{ $navBase }} {{ request()->routeIs('reports.*') ? $active : $idle }}">
         Reports
@@ -150,16 +152,18 @@
                     Guards
                 </a>
 
+                @can('clients.view')
                 <a href="{{ route('clients.index') }}"
                    class="{{ $mBase }} {{ request()->routeIs('clients.*') ? $mActive : $mIdle }}">
                     Clients
                 </a>
+                @endcan
 
                 <a href="{{ route('events.index') }}"
                    class="{{ $mBase }} {{ request()->routeIs('events.*') ? $mActive : $mIdle }}">
                     Events
                 </a>
-@can('viewReports')
+@can('view-reports')
     <a href="{{ route('reports.home') }}"
        class="{{ $mBase }} {{ request()->routeIs('reports.*') ? $mActive : $mIdle }}">
         Reports

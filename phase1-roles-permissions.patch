@@ -1,0 +1,156 @@
+diff --git a/app/Providers/AuthServiceProvider.php b/app/Providers/AuthServiceProvider.php
+index 370658e..420f086 100644
+--- a/app/Providers/AuthServiceProvider.php
++++ b/app/Providers/AuthServiceProvider.php
+@@ -40,7 +40,7 @@ public function boot(): void
+          * Admins can view reports (Super Admin already allowed)
+          */
+         Gate::define('view-reports', function ($user) {
+-            return $user->hasRole('Admin');
++            return $user->hasAnyRole(['Admin', 'Accountant']);
+         });
+ 
+         /**
+@@ -50,7 +50,30 @@ public function boot(): void
+          * Only Admins & Super Admins
+          */
+         Gate::define('manage-invoices', function ($user) {
+-            return $user->hasRole('Admin');
++            return $user->hasAnyRole(['Admin', 'Accountant']);
++        });
++
++        /**
++         * ---------------------------------------------------------
++         * CHARGE RATE (FINANCIAL)
++         * ---------------------------------------------------------
++         * Super Admin (via bypass) + Accountant only.
++         * Admin is intentionally excluded.
++         */
++        Gate::define('view-charge-rate', function ($user) {
++            return $user->hasRole('Accountant');
++        });
++
++        /**
++         * ---------------------------------------------------------
++         * GUARD PERSONAL DETAILS
++         * ---------------------------------------------------------
++         * Everyone except Moderator (Super Admin via bypass;
++         * Admin + Accountant here). Moderator gets the restricted
++         * Name / Address / Badge / Expiry guard view in Phase 3.
++         */
++        Gate::define('view-guard-details', function ($user) {
++            return $user->hasAnyRole(['Admin', 'Accountant']);
+         });
+ 
+         /**
+diff --git a/database/seeders/RolesAndPermissionsSeeder.php b/database/seeders/RolesAndPermissionsSeeder.php
+index 845ebfe..02da929 100644
+--- a/database/seeders/RolesAndPermissionsSeeder.php
++++ b/database/seeders/RolesAndPermissionsSeeder.php
+@@ -44,29 +44,46 @@ public function run(): void
+             Permission::firstOrCreate(['name' => $permission]);
+         }
+ 
+-        // Roles
+-        $superAdmin = Role::firstOrCreate(['name' => 'Super Admin']);
++        // ---------------------------------------------------------
++        // Roles — permission sets are AUTHORITATIVE (syncPermissions).
++        // Re-running this seeder brings each role's permissions to
++        // exactly the set listed here (extras are revoked). This is
++        // what lets Phase 1 strip perms in production, not just add.
++        // ---------------------------------------------------------
+ 
++        // Super Admin — no explicit permissions; the Gate::before
++        // bypass in AuthServiceProvider grants everything.
++        Role::firstOrCreate(['name' => 'Super Admin']);
++
++        // Admin — everything except user management.
+         $admin = Role::firstOrCreate(['name' => 'Admin']);
+-        $admin->givePermissionTo(
++        $admin->syncPermissions(
+             Permission::where('name', '!=', 'users.manage')->get()
+         );
+ 
+-        $moderator = Role::firstOrCreate(['name' => 'Moderator']);
+-        $moderator->givePermissionTo(
+-            Permission::whereNotIn('name', [
+-                'users.manage',
+-                'clients.delete',
+-                'guards.delete',
+-                'events.delete',
+-                'invoices.delete',
+-            ])->get()
+-        );
++        // Accountant — full invoicing/reports (charge-rate via the
++        // view-charge-rate gate), create/edit clients & events, full
++        // guard VIEW only. No user management, no deletes, no shift
++        // assignment.
++        $accountant = Role::firstOrCreate(['name' => 'Accountant']);
++        $accountant->syncPermissions([
++            'clients.view', 'clients.create', 'clients.edit',
++            'events.view', 'events.create', 'events.edit',
++            'guards.view',
++            'reports.view',
++            'invoices.view', 'invoices.create', 'invoices.edit',
++        ]);
+ 
+-        $shiftAssigner = Role::firstOrCreate(['name' => 'Shift Assigner']);
+-        $shiftAssigner->givePermissionTo([
+-            'events.view',
++        // Moderator — guards + events (no delete) + shift assignment.
++        // No clients module, no reports, no invoicing.
++        $moderator = Role::firstOrCreate(['name' => 'Moderator']);
++        $moderator->syncPermissions([
++            'guards.view', 'guards.create', 'guards.edit',
++            'events.view', 'events.create', 'events.edit',
+             'shifts.assign',
+         ]);
++
++        // Shift Assigner — RETIRED. Intentionally not managed here.
++        // Any existing role row and its data are left untouched.
+     }
+ }
+diff --git a/resources/views/layouts/default.blade.php b/resources/views/layouts/default.blade.php
+index 7a94576..333989e 100644
+--- a/resources/views/layouts/default.blade.php
++++ b/resources/views/layouts/default.blade.php
+@@ -54,16 +54,18 @@ class="{{ $navBase }} {{ request()->routeIs('security-guards.*') ? $active : $id
+                     Guards
+                 </a>
+ 
++                @can('clients.view')
+                 <a href="{{ route('clients.index') }}"
+                    class="{{ $navBase }} {{ request()->routeIs('clients.*') ? $active : $idle }}">
+                     Clients
+                 </a>
++                @endcan
+ 
+                 <a href="{{ route('events.index') }}"
+                    class="{{ $navBase }} {{ request()->routeIs('events.*') ? $active : $idle }}">
+                     Events
+                 </a>
+-@can('viewReports')
++@can('view-reports')
+     <a href="{{ route('reports.home') }}"
+        class="{{ $navBase }} {{ request()->routeIs('reports.*') ? $active : $idle }}">
+         Reports
+@@ -150,16 +152,18 @@ class="{{ $mBase }} {{ request()->routeIs('security-guards.*') ? $mActive : $mId
+                     Guards
+                 </a>
+ 
++                @can('clients.view')
+                 <a href="{{ route('clients.index') }}"
+                    class="{{ $mBase }} {{ request()->routeIs('clients.*') ? $mActive : $mIdle }}">
+                     Clients
+                 </a>
++                @endcan
+ 
+                 <a href="{{ route('events.index') }}"
+                    class="{{ $mBase }} {{ request()->routeIs('events.*') ? $mActive : $mIdle }}">
+                     Events
+                 </a>
+-@can('viewReports')
++@can('view-reports')
+     <a href="{{ route('reports.home') }}"
+        class="{{ $mBase }} {{ request()->routeIs('reports.*') ? $mActive : $mIdle }}">
+         Reports

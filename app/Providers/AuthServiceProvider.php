@@ -40,7 +40,7 @@ class AuthServiceProvider extends ServiceProvider
          * Admins can view reports (Super Admin already allowed)
          */
         Gate::define('view-reports', function ($user) {
-            return $user->hasRole('Admin');
+            return $user->hasAnyRole(['Admin', 'Accountant']);
         });
 
         /**
@@ -50,7 +50,30 @@ class AuthServiceProvider extends ServiceProvider
          * Only Admins & Super Admins
          */
         Gate::define('manage-invoices', function ($user) {
-            return $user->hasRole('Admin');
+            return $user->hasAnyRole(['Admin', 'Accountant']);
+        });
+
+        /**
+         * ---------------------------------------------------------
+         * CHARGE RATE (FINANCIAL)
+         * ---------------------------------------------------------
+         * Super Admin (via bypass) + Accountant only.
+         * Admin is intentionally excluded.
+         */
+        Gate::define('view-charge-rate', function ($user) {
+            return $user->hasRole('Accountant');
+        });
+
+        /**
+         * ---------------------------------------------------------
+         * GUARD PERSONAL DETAILS
+         * ---------------------------------------------------------
+         * Everyone except Moderator (Super Admin via bypass;
+         * Admin + Accountant here). Moderator gets the restricted
+         * Name / Address / Badge / Expiry guard view in Phase 3.
+         */
+        Gate::define('view-guard-details', function ($user) {
+            return $user->hasAnyRole(['Admin', 'Accountant']);
         });
 
         /**
