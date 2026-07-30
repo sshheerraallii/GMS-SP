@@ -18,6 +18,9 @@ class EventAssignmentSlot extends Model
         'end_time',
         'break_hours',
         'location',
+        'site_postcode',
+        'site_name',
+        'site_address',
     ];
 
     protected $casts = [

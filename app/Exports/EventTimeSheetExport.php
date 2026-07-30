@@ -13,11 +13,11 @@ use Maatwebsite\Excel\Concerns\WithTitle;
 
 class EventTimeSheetExport implements FromCollection, WithHeadings, ShouldAutoSize, WithTitle
 {
-    public function __construct(private int $eventId) {}
+    public function __construct(private int $eventId, private bool $reduced = false) {}
 
     public function headings(): array
     {
-        return [
+        $base = [
             'Sr',
             'Date',
             'First Names',
@@ -27,6 +27,13 @@ class EventTimeSheetExport implements FromCollection, WithHeadings, ShouldAutoSi
             'End Time',
             'Break',
             'Total Hours',
+        ];
+
+        if ($this->reduced) {
+            return $base;
+        }
+
+        return array_merge($base, [
             'Role',
             'SIA',
             'Expiry',
@@ -39,7 +46,7 @@ class EventTimeSheetExport implements FromCollection, WithHeadings, ShouldAutoSi
             'Sort Code',
             'Account Number',
             'Beneficiary',
-        ];
+        ]);
     }
 
     public function collection(): Collection
@@ -48,6 +55,7 @@ class EventTimeSheetExport implements FromCollection, WithHeadings, ShouldAutoSi
             ->from('event_shifts as es')
             ->join('security_guards as sg', 'sg.id', '=', 'es.guard_id')
             ->where('es.event_id', $this->eventId)
+            ->whereNull('es.cancelled_at')
             ->select([
                 'es.date',
                 'es.start_time',
@@ -101,7 +109,7 @@ class EventTimeSheetExport implements FromCollection, WithHeadings, ShouldAutoSi
                 $first = implode(' ', $parts);
             }
 
-            return [
+            $base = [
                 $idx + 1,
                 $row->date ? Carbon::parse($row->date)->format('Y-m-d') : '',
                 $first,
@@ -111,6 +119,13 @@ class EventTimeSheetExport implements FromCollection, WithHeadings, ShouldAutoSi
                 $row->end_time ? substr((string) $row->end_time, 0, 5) : '',
                 number_format((float) ($row->break_hours ?? 0), 2, '.', ''),
                 number_format((float) ($row->total_hours ?? 0), 2, '.', ''),
+            ];
+
+            if ($this->reduced) {
+                return $base;
+            }
+
+            return array_merge($base, [
                 $row->category ?? '',
                 $row->license_number ?? '',
                 $row->license_exp_date ? Carbon::parse($row->license_exp_date)->format('Y-m-d') : '',
@@ -123,12 +138,12 @@ class EventTimeSheetExport implements FromCollection, WithHeadings, ShouldAutoSi
                 $row->sort_code ?? '',
                 $row->account_number ?? '',
                 $row->beneficiary_name ?? '',
-            ];
+            ]);
         });
     }
 
     public function title(): string
     {
-        return 'Time Sheet';
+        return $this->reduced ? 'Time Sheet (No Details)' : 'Time Sheet';
     }
 }

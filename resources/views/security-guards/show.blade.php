@@ -16,6 +16,7 @@
             ← Back to list
         </a>
 
+        @can('view-guard-details')
         <button type="button"
                 id="openCustomPdfModal"
                 class="px-4 py-2 rounded-lg border border-blue-300 bg-blue-50 text-blue-700 hover:bg-blue-100">
@@ -27,6 +28,7 @@
            class="px-4 py-2 rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100">
             Full PDF
         </a>
+        @endcan
     </div>
 </div>
 
@@ -40,6 +42,7 @@
     
 
     <!-- Card -->
+    @can('view-guard-details')
     <div class="bg-white rounded-xl shadow p-6 space-y-8">
 
         <!-- Basic Info -->
@@ -103,7 +106,21 @@
 
         <!-- Documents -->
         <div>
-            <h3 class="text-lg font-semibold mb-4 border-b pb-2">Documents</h3>
+            @php
+                $requiredDocs = [
+                    'profile_picture','sia_license','sia_license_back','driving_license_doc','passport',
+                    'evisa_ss','rtw_ss','proof_add1','proof_add2','ni_letter',
+                ];
+                $missingRequired = collect($requiredDocs)->filter(fn ($f) => empty($securityGuard->$f))->count();
+            @endphp
+            <h3 class="text-lg font-semibold mb-4 border-b pb-2 flex items-center">
+                <span>Documents</span>
+                @if($missingRequired > 0)
+                    <span class="ml-2 inline-flex items-center rounded-full bg-red-100 text-red-700 text-xs font-medium px-2 py-0.5">
+                        {{ $missingRequired }} required missing
+                    </span>
+                @endif
+            </h3>
 
             <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 text-sm">
 
@@ -115,7 +132,7 @@
                             src="{{ asset('storage/'.$securityGuard->profile_picture) }}"
                             class="mx-auto h-32 w-32 rounded-full object-cover border">
                     @else
-                        <p class="text-gray-400">Not uploaded</p>
+                        <span class="inline-flex items-center rounded-full bg-red-100 text-red-700 text-xs font-medium px-2 py-0.5">Missing</span>
                     @endif
                 </div>
 
@@ -155,6 +172,8 @@
                                class="text-emerald-600 hover:underline">
                                 View Document
                             </a>
+                        @elseif(in_array($field, $requiredDocs))
+                            <span class="inline-flex items-center self-start rounded-full bg-red-100 text-red-700 text-xs font-medium px-2 py-0.5">Missing</span>
                         @else
                             <p class="text-gray-400">Not uploaded</p>
                         @endif
@@ -193,8 +212,20 @@
 
 
     </div>
+    @else
+    <!-- Restricted view (Moderator): Name / Address / Badge / Expiry only -->
+    <div class="bg-white rounded-xl shadow p-6">
+        <h2 class="text-xl font-semibold mb-4">{{ $securityGuard->fullname }}</h2>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+            <div><span class="font-medium">Address:</span> {{ $securityGuard->adresse ?? '-' }}</div>
+            <div><span class="font-medium">Badge No:</span> {{ $securityGuard->license_number ?? '-' }}</div>
+            <div><span class="font-medium">Expiry:</span> {{ $securityGuard->license_exp_date ? \Carbon\Carbon::parse($securityGuard->license_exp_date)->format('d M Y') : '-' }}</div>
+        </div>
+    </div>
+    @endcan
 </div>
 
+@can('view-guard-details')
 <div id="customPdfModal" style="display:none; position:fixed; inset:0; z-index:9999;">
     <div id="customPdfBackdrop" style="position:absolute; inset:0; background:rgba(0,0,0,.55);"></div>
 
@@ -379,5 +410,7 @@ document.addEventListener('DOMContentLoaded', function () {
 </script>
 
 
+
+@endcan
 
 @endsection

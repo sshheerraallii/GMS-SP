@@ -139,6 +139,7 @@
             
         </div>
 
+        @can('view-charge-rate')
         {{-- CHARGE RATE --}}
         <div>
             <label class="block font-medium mb-1">Charge Rate / Hour</label>
@@ -146,6 +147,7 @@
                    value="{{ old('charge_rate') }}"
                    class="w-full border rounded px-3 py-2">
         </div>
+        @endcan
 
         {{-- INVOICE DATE --}}
         <div>

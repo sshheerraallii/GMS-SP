@@ -27,7 +27,7 @@ class ChaseupController extends Controller
 
         $query = EventShift::query()
             ->with([
-                'event.client:id,name',
+                'event.client:id,name,color',
                 'securityGuard:id,fullname',
             ])
             ->whereDate('date', $selectedDate);
@@ -111,6 +111,7 @@ class ChaseupController extends Controller
                 'break_hours'        => $shift->break_hours !== null ? (float) $shift->break_hours : null,
                 'total_hours'        => $totalHours,
                 'client_name'        => $clientName,
+                'client_color'       => optional(optional($shift->event)->client)->color,
                 'event_id'           => (int) $shift->event_id,
                 'event_name'         => $eventName,
                 'client_event_label' => trim(collect([$clientName, $eventName])->filter()->implode(' · ')) ?: null,
@@ -126,6 +127,7 @@ class ChaseupController extends Controller
 
                 'missing_fields'     => $missingFields,
                 'is_missing'         => !empty($missingFields),
+                'is_cancelled'       => $shift->cancelled_at !== null,
             ];
         });
 
@@ -334,6 +336,84 @@ class ChaseupController extends Controller
     /**
      * Build the composite key used to match a shift to its note.
      */
+    /**
+     * Read-only JSON feed of upcoming, unmarked shifts for the in-app
+     * reminder poller (no cron). Returns shifts starting within the next
+     * ~2h15m (UK time) that have a guard + start time and have NOT been
+     * marked (no all_ok / on_way answer). Available to any logged-in user.
+     */
+    public function reminders(Request $request)
+    {
+        $today    = now('Europe/London')->toDateString();
+        $tomorrow = now('Europe/London')->addDay()->toDateString();
+
+        $shifts = EventShift::query()
+            ->with([
+                'event:id,event_name,client_id',
+                'event.client:id,name',
+                'securityGuard:id,fullname',
+            ])
+            ->whereNull('cancelled_at')
+            ->whereNotNull('guard_id')
+            ->whereNotNull('start_time')
+            ->whereIn('date', [$today, $tomorrow])
+            ->get();
+
+        if ($shifts->isEmpty()) {
+            return response()->json(['reminders' => []]);
+        }
+
+        $chaseupLookup = Chaseup::query()
+            ->whereIn('date', [$today, $tomorrow])
+            ->whereNotNull('event_id')
+            ->whereNotNull('guard_id')
+            ->get()
+            ->keyBy(fn (Chaseup $c) => $this->identityKey(
+                (int) $c->event_id,
+                optional($c->date)->format('Y-m-d'),
+                (int) $c->guard_id
+            ));
+
+        $now = now('Europe/London');
+
+        $reminders = $shifts->map(function (EventShift $shift) use ($chaseupLookup, $now) {
+            $dateStr = optional($shift->date)->format('Y-m-d');
+            $key     = $this->identityKey((int) $shift->event_id, $dateStr, (int) $shift->guard_id);
+            $chaseup = $chaseupLookup->get($key);
+
+            $marked = $chaseup && (
+                !in_array($chaseup->all_ok, [null, ''], true) ||
+                !in_array($chaseup->on_way, [null, ''], true)
+            );
+            if ($marked) {
+                return null;
+            }
+
+            $startTime = substr((string) $shift->start_time, 0, 5);
+            $startsAt  = Carbon::parse($dateStr . ' ' . $startTime, 'Europe/London');
+
+            if ($startsAt->lt($now->copy()->subMinutes(5)) || $startsAt->gt($now->copy()->addMinutes(135))) {
+                return null;
+            }
+
+            $clientName = optional(optional($shift->event)->client)->name;
+            $eventName  = optional($shift->event)->event_name;
+            $label = trim(collect([$clientName, $eventName])->filter()->implode(' · ')) ?: null;
+
+            return [
+                'key'        => $key,
+                'guard_name' => optional($shift->securityGuard)->fullname,
+                'label'      => $label,
+                'location'   => $shift->location,
+                'date'       => $dateStr,
+                'start_time' => $startTime,
+                'starts_at'  => $startsAt->toIso8601String(),
+            ];
+        })->filter()->values();
+
+        return response()->json(['reminders' => $reminders]);
+    }
+
     protected function identityKey(int $eventId, ?string $date, int $guardId): string
     {
         return implode('|', [$eventId, (string) $date, $guardId]);

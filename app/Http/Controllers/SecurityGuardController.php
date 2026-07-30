@@ -159,8 +159,8 @@ class SecurityGuardController extends Controller
 
     private function validatedData(Request $request): array
     {
-        $isCreate = $request->isMethod('post');
-        $fileRule = $isCreate ? 'required' : 'nullable';
+        // Phase 3: all guard documents are optional on create and edit.
+        $fileRule = 'nullable';
 
         return $request->validate([
             'fullname'         => 'required|string|max:255',

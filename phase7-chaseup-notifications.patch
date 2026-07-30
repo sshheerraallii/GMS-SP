@@ -1,0 +1,187 @@
+diff --git a/app/Http/Controllers/ChaseupController.php b/app/Http/Controllers/ChaseupController.php
+index f96019c..3ff2c02 100644
+--- a/app/Http/Controllers/ChaseupController.php
++++ b/app/Http/Controllers/ChaseupController.php
+@@ -336,6 +336,84 @@ protected function findChaseupForShift(EventShift $shift): ?Chaseup
+     /**
+      * Build the composite key used to match a shift to its note.
+      */
++    /**
++     * Read-only JSON feed of upcoming, unmarked shifts for the in-app
++     * reminder poller (no cron). Returns shifts starting within the next
++     * ~2h15m (UK time) that have a guard + start time and have NOT been
++     * marked (no all_ok / on_way answer). Available to any logged-in user.
++     */
++    public function reminders(Request $request)
++    {
++        $today    = now('Europe/London')->toDateString();
++        $tomorrow = now('Europe/London')->addDay()->toDateString();
++
++        $shifts = EventShift::query()
++            ->with([
++                'event:id,event_name,client_id',
++                'event.client:id,name',
++                'securityGuard:id,fullname',
++            ])
++            ->whereNull('cancelled_at')
++            ->whereNotNull('guard_id')
++            ->whereNotNull('start_time')
++            ->whereIn('date', [$today, $tomorrow])
++            ->get();
++
++        if ($shifts->isEmpty()) {
++            return response()->json(['reminders' => []]);
++        }
++
++        $chaseupLookup = Chaseup::query()
++            ->whereIn('date', [$today, $tomorrow])
++            ->whereNotNull('event_id')
++            ->whereNotNull('guard_id')
++            ->get()
++            ->keyBy(fn (Chaseup $c) => $this->identityKey(
++                (int) $c->event_id,
++                optional($c->date)->format('Y-m-d'),
++                (int) $c->guard_id
++            ));
++
++        $now = now('Europe/London');
++
++        $reminders = $shifts->map(function (EventShift $shift) use ($chaseupLookup, $now) {
++            $dateStr = optional($shift->date)->format('Y-m-d');
++            $key     = $this->identityKey((int) $shift->event_id, $dateStr, (int) $shift->guard_id);
++            $chaseup = $chaseupLookup->get($key);
++
++            $marked = $chaseup && (
++                !in_array($chaseup->all_ok, [null, ''], true) ||
++                !in_array($chaseup->on_way, [null, ''], true)
++            );
++            if ($marked) {
++                return null;
++            }
++
++            $startTime = substr((string) $shift->start_time, 0, 5);
++            $startsAt  = Carbon::parse($dateStr . ' ' . $startTime, 'Europe/London');
++
++            if ($startsAt->lt($now->copy()->subMinutes(5)) || $startsAt->gt($now->copy()->addMinutes(135))) {
++                return null;
++            }
++
++            $clientName = optional(optional($shift->event)->client)->name;
++            $eventName  = optional($shift->event)->event_name;
++            $label = trim(collect([$clientName, $eventName])->filter()->implode(' · ')) ?: null;
++
++            return [
++                'key'        => $key,
++                'guard_name' => optional($shift->securityGuard)->fullname,
++                'label'      => $label,
++                'location'   => $shift->location,
++                'date'       => $dateStr,
++                'start_time' => $startTime,
++                'starts_at'  => $startsAt->toIso8601String(),
++            ];
++        })->filter()->values();
++
++        return response()->json(['reminders' => $reminders]);
++    }
++
+     protected function identityKey(int $eventId, ?string $date, int $guardId): string
+     {
+         return implode('|', [$eventId, (string) $date, $guardId]);
+diff --git a/resources/views/layouts/default.blade.php b/resources/views/layouts/default.blade.php
+index 333989e..326fa65 100644
+--- a/resources/views/layouts/default.blade.php
++++ b/resources/views/layouts/default.blade.php
+@@ -237,5 +237,81 @@ class="w-full bg-gray-700 hover:bg-gray-600 text-white px-3 py-2 rounded-md text
+ 
+     
+ 
++    @auth
++    {{-- Chaseup shift reminders: client-side poller + toasts (no cron, UK time). --}}
++    <div id="shiftReminderToasts" class="fixed top-4 right-4 z-[9999] flex w-80 max-w-[90vw] flex-col gap-2"></div>
++    <script>
++    (function () {
++        const ENDPOINT = "{{ route('chaseup.reminders') }}";
++        const TIERS = [120, 90, 60];   // minutes before shift start
++        const CATCH = 30;              // catch window (min) per tier
++        const POLL_MS = 60000;
++        const STORE_KEY = 'gms_shift_reminders_shown';
++
++        function loadShown() {
++            try { return new Set(JSON.parse(localStorage.getItem(STORE_KEY) || '[]')); }
++            catch (e) { return new Set(); }
++        }
++        function saveShown(set) {
++            try { localStorage.setItem(STORE_KEY, JSON.stringify([].concat([...set]).slice(-500))); } catch (e) {}
++        }
++
++        function showToast(r, tier) {
++            const wrap = document.getElementById('shiftReminderToasts');
++            if (!wrap) return;
++            const label = tier === 60 ? '1 hour' : (tier === 90 ? '1.5 hours' : '2 hours');
++            const el = document.createElement('div');
++            el.className = 'rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-gray-800 shadow-lg';
++            let html = '<div class="flex items-start justify-between gap-2"><div>';
++            html += '<div class="font-semibold text-amber-800">Shift in ~' + label + '</div>';
++            html += '<div class="mt-0.5 font-medium">' + (r.guard_name || 'Guard') + '</div>';
++            if (r.label)    html += '<div class="text-xs text-gray-600">' + r.label + '</div>';
++            if (r.location) html += '<div class="text-xs text-gray-600">' + r.location + '</div>';
++            html += '<div class="mt-0.5 text-xs text-gray-600">Starts ' + r.start_time + ' &middot; ' + r.date + '</div>';
++            html += '</div><button type="button" class="text-lg leading-none text-gray-400 hover:text-gray-700">&times;</button></div>';
++            el.innerHTML = html;
++            el.querySelector('button').addEventListener('click', function () { el.remove(); });
++            wrap.appendChild(el);
++            setTimeout(function () { el.remove(); }, 60000);
++        }
++
++        async function poll() {
++            let data;
++            try {
++                const res = await fetch(ENDPOINT, { headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' } });
++                if (!res.ok) return;
++                data = await res.json();
++            } catch (e) { return; }
++
++            const shown = loadShown();
++            const now = Date.now();
++
++            (data.reminders || []).forEach(function (r) {
++                const start = new Date(r.starts_at).getTime();
++                if (isNaN(start)) return;
++                const mins = (start - now) / 60000;
++                if (mins < 0) return;
++
++                for (let i = 0; i < TIERS.length; i++) {
++                    const T = TIERS[i];
++                    if (mins <= T && mins > (T - CATCH)) {
++                        const id = r.key + '|' + T;
++                        if (!shown.has(id)) { showToast(r, T); shown.add(id); }
++                        break; // most urgent applicable tier only
++                    }
++                }
++            });
++
++            saveShown(shown);
++        }
++
++        document.addEventListener('DOMContentLoaded', function () {
++            poll();
++            setInterval(poll, POLL_MS);
++        });
++    })();
++    </script>
++    @endauth
++
+ </body>
+ </html>
+diff --git a/routes/web.php b/routes/web.php
+index 99fd145..0c2121e 100644
+--- a/routes/web.php
++++ b/routes/web.php
+@@ -364,6 +364,7 @@
+     */
+     Route::prefix('chaseup')->name('chaseup.')->group(function () {
+         Route::get('/', [ChaseupController::class, 'index'])->name('index');
++        Route::get('/reminders', [ChaseupController::class, 'reminders'])->name('reminders');
+         Route::post('/shift/{eventShift}/field', [ChaseupController::class, 'updateField'])
+             ->whereNumber('eventShift')
+             ->name('updateField');

@@ -27,6 +27,7 @@
         </div>
     @endif
 
+    @can('view-guard-details')
     {{-- Controls --}}
     <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-3">
 
@@ -296,6 +297,62 @@
     <div class="mt-6">
         {{ $securityGuards->links() }}
     </div>
+    @else
+    {{-- Restricted view (Moderator): Name / Address / Badge / Expiry only --}}
+    <form method="GET" class="mb-4 flex items-center gap-2">
+        <input type="text" name="q" value="{{ request('q') }}"
+               placeholder="Search by name…"
+               class="border rounded px-3 py-2 text-sm w-full sm:w-64">
+        <button type="submit"
+                class="px-4 py-2 rounded-md bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700">
+            Search
+        </button>
+        @if(request('q'))
+            <a href="{{ route('security-guards.index') }}"
+               class="px-3 py-2 rounded-md border text-sm text-gray-600 hover:bg-gray-50">Clear</a>
+        @endif
+    </form>
+
+    <div class="overflow-x-auto rounded-lg border border-gray-200">
+        <table class="min-w-full text-sm">
+            <thead class="bg-gray-100">
+                <tr>
+                    <th class="px-4 py-3 text-left font-semibold">Name</th>
+                    <th class="px-4 py-3 text-left font-semibold">Address</th>
+                    <th class="px-4 py-3 text-left font-semibold">Badge No</th>
+                    <th class="px-4 py-3 text-left font-semibold">Expiry</th>
+                    <th class="px-4 py-3 text-right font-semibold">Actions</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-100">
+                @forelse($securityGuards as $guard)
+                    <tr class="hover:bg-gray-50">
+                        <td class="px-4 py-3 font-medium whitespace-nowrap">{{ $guard->fullname }}</td>
+                        <td class="px-4 py-3">{{ $guard->adresse ?? '-' }}</td>
+                        <td class="px-4 py-3 whitespace-nowrap">{{ $guard->license_number ?? '-' }}</td>
+                        <td class="px-4 py-3 whitespace-nowrap">
+                            {{ $guard->license_exp_date ? \Carbon\Carbon::parse($guard->license_exp_date)->format('d M Y') : '-' }}
+                        </td>
+                        <td class="px-4 py-3 text-right whitespace-nowrap">
+                            <a href="{{ route('security-guards.show', $guard->id) }}"
+                               class="text-emerald-600 hover:underline">View</a>
+                        </td>
+                    </tr>
+                @empty
+                    <tr>
+                        <td colspan="5" class="px-6 py-10 text-center text-gray-500">
+                            No security guards found.
+                        </td>
+                    </tr>
+                @endforelse
+            </tbody>
+        </table>
+    </div>
+
+    <div class="mt-6">
+        {{ $securityGuards->appends(request()->query())->links() }}
+    </div>
+    @endcan
 
 </div>
 

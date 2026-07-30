@@ -1,0 +1,431 @@
+diff --git a/app/Http/Controllers/EventController.php b/app/Http/Controllers/EventController.php
+index 1c644b8..b3b5fc3 100644
+--- a/app/Http/Controllers/EventController.php
++++ b/app/Http/Controllers/EventController.php
+@@ -469,6 +469,21 @@ private function nextSlotNumberForDate(Collection $rows, string $date, int $curr
+     }
+     
+ 
++    /**
++     * Compose the combined `location` string from the three structured
++     * site fields, in the order Site Name, Postcode, Site Address.
++     * Empty segments are dropped. Returns null when all are empty.
++     */
++    private function composeLocation($siteName, $postcode, $siteAddress): ?string
++    {
++        $parts = array_filter(
++            [trim((string) $siteName), trim((string) $postcode), trim((string) $siteAddress)],
++            fn ($p) => $p !== ''
++        );
++
++        return count($parts) ? implode(', ', $parts) : null;
++    }
++
+     public function guards(Event $event)
+     {
+         $event->load(['assignmentSlots.securityGuard']);
+@@ -495,21 +510,27 @@ public function guards(Event $event)
+ 
+             foreach ($dateSlots as $slot) {
+                 $rows[] = [
+-                    'guard_id'        => $slot->guard_id,
+-                    'shift1_start'    => $slot->start_time,
+-                    'shift1_end'      => $slot->end_time,
+-                    'break_hours'     => $slot->break_hours ?? 0,
+-                    'shift1_location' => $slot->location,
++                    'guard_id'            => $slot->guard_id,
++                    'shift1_start'        => $slot->start_time,
++                    'shift1_end'          => $slot->end_time,
++                    'break_hours'         => $slot->break_hours ?? 0,
++                    'shift1_location'     => $slot->location,
++                    'shift1_postcode'     => $slot->site_postcode,
++                    'shift1_site_name'    => $slot->site_name,
++                    'shift1_site_address' => $slot->site_address,
+                 ];
+             }
+ 
+             while (count($rows) < $requiredCount) {
+                 $rows[] = [
+-                    'guard_id'        => null,
+-                    'shift1_start'    => null,
+-                    'shift1_end'      => null,
+-                    'break_hours'     => 0,
+-                    'shift1_location' => null,
++                    'guard_id'            => null,
++                    'shift1_start'        => null,
++                    'shift1_end'          => null,
++                    'break_hours'         => 0,
++                    'shift1_location'     => null,
++                    'shift1_postcode'     => null,
++                    'shift1_site_name'    => null,
++                    'shift1_site_address' => null,
+                 ];
+             }
+ 
+@@ -591,12 +612,14 @@ public function updateGuards(Request $request, Event $event)
+                     $assignments[$date][$i]['break_hours'] = 0;
+                 }
+ 
+-                $assignments[$date][$i]['shift1_location'] = array_key_exists('shift1_location', $row)
+-                    ? trim((string) ($row['shift1_location'] ?? ''))
+-                    : null;
++                foreach (['shift1_postcode', 'shift1_site_name', 'shift1_site_address'] as $siteKey) {
++                    $assignments[$date][$i][$siteKey] = array_key_exists($siteKey, $row)
++                        ? trim((string) ($row[$siteKey] ?? ''))
++                        : null;
+ 
+-                if ($assignments[$date][$i]['shift1_location'] === '') {
+-                    $assignments[$date][$i]['shift1_location'] = null;
++                    if ($assignments[$date][$i][$siteKey] === '') {
++                        $assignments[$date][$i][$siteKey] = null;
++                    }
+                 }
+             }
+         }
+@@ -610,7 +633,9 @@ public function updateGuards(Request $request, Event $event)
+             'assignments.*.*.shift1_start'    => 'nullable|date_format:H:i',
+            'assignments.*.*.shift1_end'      => 'nullable|date_format:H:i',
+             'assignments.*.*.break_hours'     => 'nullable|numeric|in:0,0.25,0.5,0.75,1',
+-            'assignments.*.*.shift1_location' => 'nullable|string|max:255',
++            'assignments.*.*.shift1_postcode'     => 'nullable|string|max:255',
++            'assignments.*.*.shift1_site_name'    => 'nullable|string|max:255',
++            'assignments.*.*.shift1_site_address' => 'nullable|string|max:255',
+         ]);
+ 
+         $alreadyAssignedGuardIds = $event->guards()
+@@ -655,21 +680,38 @@ public function updateGuards(Request $request, Event $event)
+             }
+         }
+ 
+-        DB::transaction(function () use ($validated, $event, $requestedGuardIds) {
++        // Grandfather map: existing composed location keyed by date|guard,
++        // used as fallback when the new 3-field site inputs are left empty
++        // (so re-saving legacy events does not blank their location).
++        $oldLocationByDateGuard = $event->assignmentSlots()
++            ->get(['date', 'guard_id', 'location'])
++            ->filter(fn ($s) => $s->guard_id)
++            ->mapWithKeys(fn ($s) => [
++                optional($s->date)->toDateString() . '|' . (int) $s->guard_id => $s->location,
++            ])
++            ->all();
++
++        DB::transaction(function () use ($validated, $event, $requestedGuardIds, $oldLocationByDateGuard) {
+             $event->assignmentSlots()->delete();
+             $event->guards()->detach();
+             $event->shifts()->delete();
+ 
+             foreach ($validated['assignments'] as $date => $rows) {
+                 foreach (array_values($rows) as $index => $row) {
++                    $composed = $this->composeLocation($row['shift1_site_name'] ?? null, $row['shift1_postcode'] ?? null, $row['shift1_site_address'] ?? null);
++                    $finalLocation = $composed ?? (!empty($row['guard_id']) ? ($oldLocationByDateGuard[$date . '|' . (int) $row['guard_id']] ?? null) : null);
++
+                     $event->assignmentSlots()->create([
+-                        'date'        => $date,
+-                        'slot_no'     => $index + 1,
+-                        'guard_id'    => $row['guard_id'] ?? null,
+-                        'start_time'  => $row['shift1_start'] ?? null,
+-                        'end_time'    => $row['shift1_end'] ?? null,
+-                        'break_hours' => $row['break_hours'] ?? 0,
+-                        'location'    => $row['shift1_location'] ?? null,
++                        'date'          => $date,
++                        'slot_no'       => $index + 1,
++                        'guard_id'      => $row['guard_id'] ?? null,
++                        'start_time'    => $row['shift1_start'] ?? null,
++                        'end_time'      => $row['shift1_end'] ?? null,
++                        'break_hours'   => $row['break_hours'] ?? 0,
++                        'site_postcode' => $row['shift1_postcode'] ?? null,
++                        'site_name'     => $row['shift1_site_name'] ?? null,
++                        'site_address'  => $row['shift1_site_address'] ?? null,
++                        'location'      => $finalLocation,
+                     ]);
+                 }
+             }
+@@ -683,15 +725,21 @@ public function updateGuards(Request $request, Event $event)
+                     $guardId = $row['guard_id'] ?? null;
+ 
+                     if (!empty($guardId) && !empty($row['shift1_start']) && !empty($row['shift1_end'])) {
++                        $composed = $this->composeLocation($row['shift1_site_name'] ?? null, $row['shift1_postcode'] ?? null, $row['shift1_site_address'] ?? null);
++                        $finalLocation = $composed ?? ($oldLocationByDateGuard[$date . '|' . (int) $guardId] ?? null);
++
+                         EventShift::create([
+-                            'event_id'    => $event->id,
+-                            'guard_id'    => (int) $guardId,
+-                            'date'        => $date,
+-                            'start_time'  => $row['shift1_start'],
+-                            'end_time'    => $row['shift1_end'],
+-                            'break_hours' => $row['break_hours'] ?? 0,
+-                            'shift_no'    => 1,
+-                            'location'    => $row['shift1_location'] ?? null,
++                            'event_id'      => $event->id,
++                            'guard_id'      => (int) $guardId,
++                            'date'          => $date,
++                            'start_time'    => $row['shift1_start'],
++                            'end_time'      => $row['shift1_end'],
++                            'break_hours'   => $row['break_hours'] ?? 0,
++                            'shift_no'      => 1,
++                            'site_postcode' => $row['shift1_postcode'] ?? null,
++                            'site_name'     => $row['shift1_site_name'] ?? null,
++                            'site_address'  => $row['shift1_site_address'] ?? null,
++                            'location'      => $finalLocation,
+                         ]);
+                     }
+                 }
+@@ -772,7 +820,9 @@ public function saveGuardSlot(Request $request, Event $event)
+         'shift1_start'    => 'nullable|date_format:H:i',
+         'shift1_end'      => 'nullable|date_format:H:i',
+         'break_hours'     => 'nullable|numeric|in:0,0.25,0.5,0.75,1',
+-        'shift1_location' => 'nullable|string|max:255',
++        'shift1_postcode'     => 'nullable|string|max:255',
++        'shift1_site_name'    => 'nullable|string|max:255',
++        'shift1_site_address' => 'nullable|string|max:255',
+     ]);
+ 
+     $date = $validated['date'];
+@@ -783,13 +833,12 @@ public function saveGuardSlot(Request $request, Event $event)
+     $endTime = $validated['shift1_end'] ?? null;
+     $breakHours = isset($validated['break_hours']) ? (float) $validated['break_hours'] : 0;
+ 
+-    $location = array_key_exists('shift1_location', $validated)
+-        ? trim((string) ($validated['shift1_location'] ?? ''))
+-        : null;
+-
+-    if ($location === '') {
+-        $location = null;
+-    }
++    $sitePostcode = array_key_exists('shift1_postcode', $validated)
++        ? (trim((string) ($validated['shift1_postcode'] ?? '')) ?: null) : null;
++    $siteName = array_key_exists('shift1_site_name', $validated)
++        ? (trim((string) ($validated['shift1_site_name'] ?? '')) ?: null) : null;
++    $siteAddress = array_key_exists('shift1_site_address', $validated)
++        ? (trim((string) ($validated['shift1_site_address'] ?? '')) ?: null) : null;
+ 
+     $oldSlot = $event->assignmentSlots()
+         ->whereDate('date', $date)
+@@ -835,7 +884,12 @@ public function saveGuardSlot(Request $request, Event $event)
+         }
+     }
+ 
+-    DB::transaction(function () use ($event, $date, $slotNo, $guardId, $startTime, $endTime, $breakHours, $location) {
++    // Compose location; fall back to the existing slot's legacy location
++    // when the 3 site fields are empty (grandfathering).
++    $composed = $this->composeLocation($siteName, $sitePostcode, $siteAddress);
++    $location = $composed ?? ($guardId ? optional($oldSlot)->location : null);
++
++    DB::transaction(function () use ($event, $date, $slotNo, $guardId, $startTime, $endTime, $breakHours, $location, $sitePostcode, $siteName, $siteAddress) {
+         $event->assignmentSlots()->updateOrCreate(
+             [
+                 'event_id' => $event->id,
+@@ -843,11 +897,14 @@ public function saveGuardSlot(Request $request, Event $event)
+                 'slot_no' => $slotNo,
+             ],
+             [
+-                'guard_id'    => $guardId,
+-                'start_time'  => $startTime,
+-                'end_time'    => $endTime,
+-                'break_hours' => $breakHours,
+-                'location'    => $location,
++                'guard_id'      => $guardId,
++                'start_time'    => $startTime,
++                'end_time'      => $endTime,
++                'break_hours'   => $breakHours,
++                'site_postcode' => $sitePostcode,
++                'site_name'     => $siteName,
++                'site_address'  => $siteAddress,
++                'location'      => $location,
+             ]
+         );
+ 
+@@ -859,14 +916,17 @@ public function saveGuardSlot(Request $request, Event $event)
+ 
+         if ($guardId && $startTime && $endTime) {
+             EventShift::create([
+-                'event_id'    => $event->id,
+-                'guard_id'    => (int) $guardId,
+-                'date'        => $date,
+-                'start_time'  => $startTime,
+-                'end_time'    => $endTime,
+-                'break_hours' => $breakHours,
+-                'shift_no'    => $slotNo,
+-                'location'    => $location,
++                'event_id'      => $event->id,
++                'guard_id'      => (int) $guardId,
++                'date'          => $date,
++                'start_time'    => $startTime,
++                'end_time'      => $endTime,
++                'break_hours'   => $breakHours,
++                'shift_no'      => $slotNo,
++                'site_postcode' => $sitePostcode,
++                'site_name'     => $siteName,
++                'site_address'  => $siteAddress,
++                'location'      => $location,
+             ]);
+         }
+ 
+diff --git a/app/Models/EventAssignmentSlot.php b/app/Models/EventAssignmentSlot.php
+index 48a195b..f316094 100644
+--- a/app/Models/EventAssignmentSlot.php
++++ b/app/Models/EventAssignmentSlot.php
+@@ -18,6 +18,9 @@ class EventAssignmentSlot extends Model
+         'end_time',
+         'break_hours',
+         'location',
++        'site_postcode',
++        'site_name',
++        'site_address',
+     ];
+ 
+     protected $casts = [
+diff --git a/app/Models/EventShift.php b/app/Models/EventShift.php
+index 90ee33c..a8b38fe 100644
+--- a/app/Models/EventShift.php
++++ b/app/Models/EventShift.php
+@@ -20,6 +20,9 @@ class EventShift extends Model
+         'end_time',
+         'break_hours',
+         'location',
++        'site_postcode',
++        'site_name',
++        'site_address',
+         'shift_no',
+     ];
+ 
+diff --git a/resources/views/events/guards.blade.php b/resources/views/events/guards.blade.php
+index 59fc766..07efd9e 100644
+--- a/resources/views/events/guards.blade.php
++++ b/resources/views/events/guards.blade.php
+@@ -144,12 +144,28 @@ class="w-full text-left px-2 py-1 border rounded"
+ 
+                                         <div class="md:col-span-2">
+                                             <label class="block text-xs font-medium mb-1 text-gray-600">Shift Location</label>
+-                                         <input type="text"
+-       class="w-full border rounded px-2 py-1"
+-       x-model="assignedGuards[date][i-1].shift1Location"
+-       @blur="queueSaveRow(date, i-1)"
+-       placeholder="Optional shift location"
+-       :disabled="!canAssign">
++                                            <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
++                                                <input type="text"
++                                                       class="w-full border rounded px-2 py-1"
++                                                       x-model="assignedGuards[date][i-1].shift1Postcode"
++                                                       @blur="queueSaveRow(date, i-1)"
++                                                       placeholder="Postcode *"
++                                                       :required="!!assignedGuards[date][i-1].id"
++                                                       :disabled="!canAssign">
++                                                <input type="text"
++                                                       class="w-full border rounded px-2 py-1"
++                                                       x-model="assignedGuards[date][i-1].shift1SiteName"
++                                                       @blur="queueSaveRow(date, i-1)"
++                                                       placeholder="Site name *"
++                                                       :required="!!assignedGuards[date][i-1].id"
++                                                       :disabled="!canAssign">
++                                                <input type="text"
++                                                       class="w-full border rounded px-2 py-1"
++                                                       x-model="assignedGuards[date][i-1].shift1SiteAddress"
++                                                       @blur="queueSaveRow(date, i-1)"
++                                                       placeholder="Site address (optional)"
++                                                       :disabled="!canAssign">
++                                            </div>
+                                         </div>
+                                     </div>
+                                     
+@@ -212,12 +228,28 @@ class="mt-2 inline-flex items-center justify-center rounded bg-blue-600 px-3 py-
+                                             
+                                         </div>
+ 
+-                                        <input type="text"
+-       class="w-full border rounded px-2 py-1"
+-       x-model="assignedGuards[date][i-1].shift1Location"
+-       @blur="queueSaveRow(date, i-1)"
+-       placeholder="Optional shift 1 location"
+-       :disabled="!canAssign">
++                                        <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
++                                            <input type="text"
++                                                   class="w-full border rounded px-2 py-1"
++                                                   x-model="assignedGuards[date][i-1].shift1Postcode"
++                                                   @blur="queueSaveRow(date, i-1)"
++                                                   placeholder="Postcode *"
++                                                   :required="!!assignedGuards[date][i-1].id"
++                                                   :disabled="!canAssign">
++                                            <input type="text"
++                                                   class="w-full border rounded px-2 py-1"
++                                                   x-model="assignedGuards[date][i-1].shift1SiteName"
++                                                   @blur="queueSaveRow(date, i-1)"
++                                                   placeholder="Site name *"
++                                                   :required="!!assignedGuards[date][i-1].id"
++                                                   :disabled="!canAssign">
++                                            <input type="text"
++                                                   class="w-full border rounded px-2 py-1"
++                                                   x-model="assignedGuards[date][i-1].shift1SiteAddress"
++                                                   @blur="queueSaveRow(date, i-1)"
++                                                   placeholder="Site address (optional)"
++                                                   :disabled="!canAssign">
++                                        </div>
+                                     </div>
+                                     
+                                      {{-- Per shift save button--}}
+@@ -452,7 +484,9 @@ function guardAssignment(dailyGuards, guards, shiftMode, existingAssignments, ca
+             shift1Start: '',
+             shift1End: '',
+             breakHours: '0',
+-            shift1Location: ''
++            shift1Postcode: '',
++            shift1SiteName: '',
++            shift1SiteAddress: ''
+         }));
+     }
+ 
+@@ -472,7 +506,9 @@ function guardAssignment(dailyGuards, guards, shiftMode, existingAssignments, ca
+                 breakHours: row.break_hours !== null && row.break_hours !== undefined && row.break_hours !== ''
+                     ? String(parseFloat(row.break_hours))
+                     : '0',
+-                shift1Location: row.shift1_location || '',
++                shift1Postcode: row.shift1_postcode || '',
++                shift1SiteName: row.shift1_site_name || '',
++                shift1SiteAddress: row.shift1_site_address || '',
+             };
+         });
+     }
+@@ -547,7 +583,9 @@ function guardAssignment(dailyGuards, guards, shiftMode, existingAssignments, ca
+ 
+                     row.shift1Start = row.shift1Start ? String(row.shift1Start).slice(0, 5) : '';
+                     row.shift1End = row.shift1End ? String(row.shift1End).slice(0, 5) : '';
+-                    row.shift1Location = row.shift1Location ?? '';
++                    row.shift1Postcode = row.shift1Postcode ?? '';
++                    row.shift1SiteName = row.shift1SiteName ?? '';
++                    row.shift1SiteAddress = row.shift1SiteAddress ?? '';
+                 }
+             }
+ 
+@@ -706,7 +744,9 @@ function guardAssignment(dailyGuards, guards, shiftMode, existingAssignments, ca
+                 if (this.shiftMode === 'same') {
+                     rows[rowIndex].shift1Start = this.globalShiftStart;
+                     rows[rowIndex].shift1End = this.globalShiftEnd;
+-                    rows[rowIndex].shift1Location = rows[rowIndex].shift1Location || '';
++                    rows[rowIndex].shift1Postcode = rows[rowIndex].shift1Postcode || '';
++                    rows[rowIndex].shift1SiteName = rows[rowIndex].shift1SiteName || '';
++                    rows[rowIndex].shift1SiteAddress = rows[rowIndex].shift1SiteAddress || '';
+                     rows[rowIndex].breakHours = rows[rowIndex].breakHours || '0';
+                 } else {
+                     if (!rows[rowIndex].shift1Start && this.latest.shift1Start) {
+@@ -903,7 +943,9 @@ function guardAssignment(dailyGuards, guards, shiftMode, existingAssignments, ca
+         shift1_start: norm(row.shift1Start),
+         shift1_end: norm(row.shift1End),
+         break_hours: normBreak(row.breakHours),
+-        shift1_location: row.shift1Location ? String(row.shift1Location).trim() : null,
++        shift1_postcode: row.shift1Postcode ? String(row.shift1Postcode).trim() : null,
++        shift1_site_name: row.shift1SiteName ? String(row.shift1SiteName).trim() : null,
++        shift1_site_address: row.shift1SiteAddress ? String(row.shift1SiteAddress).trim() : null,
+     };
+ 
+     return fetch('{{ route('events.saveGuardSlot', $event->id) }}', {
+@@ -969,7 +1011,9 @@ function guardAssignment(dailyGuards, guards, shiftMode, existingAssignments, ca
+                     shift1_start: norm(g.shift1Start),
+                     shift1_end: norm(g.shift1End),
+                     break_hours: normBreak(g.breakHours),
+-                    shift1_location: g.shift1Location ? String(g.shift1Location).trim() : null,
++                    shift1_postcode: g.shift1Postcode ? String(g.shift1Postcode).trim() : null,
++                    shift1_site_name: g.shift1SiteName ? String(g.shift1SiteName).trim() : null,
++                    shift1_site_address: g.shift1SiteAddress ? String(g.shift1SiteAddress).trim() : null,
+                 }));
+             }
+ 

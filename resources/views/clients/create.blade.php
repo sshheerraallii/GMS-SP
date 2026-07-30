@@ -49,6 +49,8 @@
             @enderror
         </div>
 
+        @include('clients.partials.color-picker', ['current' => old('color')])
+
         <!-- Buttons -->
         <div class="flex space-x-3">
             <button type="submit"

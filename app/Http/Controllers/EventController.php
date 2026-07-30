@@ -469,6 +469,93 @@ $locationValue = $assoc['location'] ?? $assoc['shift_location'] ?? $assoc['site_
     }
     
 
+    /**
+     * Compose the combined `location` string from the three structured
+     * site fields, in the order Site Name, Postcode, Site Address.
+     * Empty segments are dropped. Returns null when all are empty.
+     */
+    private function composeLocation($siteName, $postcode, $siteAddress): ?string
+    {
+        $parts = array_filter(
+            [trim((string) $siteName), trim((string) $postcode), trim((string) $siteAddress)],
+            fn ($p) => $p !== ''
+        );
+
+        return count($parts) ? implode(', ', $parts) : null;
+    }
+
+    /**
+     * Snapshot an event's current shift cancellations, keyed by
+     * "date|guard_id" => original cancelled_at. Used to survive the
+     * delete-and-recreate save pattern (cancelled_at lives on a shift
+     * row that is destroyed on every save).
+     */
+    private function snapshotCancellations(Event $event): array
+    {
+        return EventShift::query()
+            ->where('event_id', $event->id)
+            ->whereNotNull('cancelled_at')
+            ->whereNotNull('guard_id')
+            ->get(['date', 'guard_id', 'cancelled_at'])
+            ->mapWithKeys(fn ($s) => [
+                optional($s->date)->toDateString() . '|' . (int) $s->guard_id => $s->cancelled_at,
+            ])
+            ->all();
+    }
+
+    /**
+     * Re-apply a cancellation snapshot to freshly-recreated shifts,
+     * preserving the original cancelled_at timestamp.
+     */
+    private function restoreCancellations(Event $event, array $snapshot): void
+    {
+        foreach ($snapshot as $key => $cancelledAt) {
+            [$date, $guardId] = explode('|', $key, 2);
+
+            EventShift::query()
+                ->where('event_id', $event->id)
+                ->whereDate('date', $date)
+                ->where('guard_id', (int) $guardId)
+                ->update(['cancelled_at' => $cancelledAt]);
+        }
+    }
+
+    /**
+     * Toggle the soft-cancel state of a guard's shift on a date.
+     * Reversible; keyed by the stable business identity
+     * (event_id, date, guard_id), never the volatile shift id.
+     */
+    public function toggleCancelShift(Request $request, Event $event)
+    {
+        $data = $request->validate([
+            'date'     => 'required|date',
+            'guard_id' => 'required|integer|exists:security_guards,id',
+        ]);
+
+        $date = Carbon::parse($data['date'])->toDateString();
+        $guardId = (int) $data['guard_id'];
+
+        $shifts = EventShift::query()
+            ->where('event_id', $event->id)
+            ->whereDate('date', $date)
+            ->where('guard_id', $guardId)
+            ->get();
+
+        if ($shifts->isEmpty()) {
+            return back()->withErrors(['cancel' => 'No shift found for that guard on that date.']);
+        }
+
+        $currentlyCancelled = $shifts->every(fn ($s) => $s->cancelled_at !== null);
+
+        EventShift::query()
+            ->where('event_id', $event->id)
+            ->whereDate('date', $date)
+            ->where('guard_id', $guardId)
+            ->update(['cancelled_at' => $currentlyCancelled ? null : now()]);
+
+        return back()->with('success', $currentlyCancelled ? 'Shift un-cancelled.' : 'Shift cancelled.');
+    }
+
     public function guards(Event $event)
     {
         $event->load(['assignmentSlots.securityGuard']);
@@ -495,21 +582,27 @@ $locationValue = $assoc['location'] ?? $assoc['shift_location'] ?? $assoc['site_
 
             foreach ($dateSlots as $slot) {
                 $rows[] = [
-                    'guard_id'        => $slot->guard_id,
-                    'shift1_start'    => $slot->start_time,
-                    'shift1_end'      => $slot->end_time,
-                    'break_hours'     => $slot->break_hours ?? 0,
-                    'shift1_location' => $slot->location,
+                    'guard_id'            => $slot->guard_id,
+                    'shift1_start'        => $slot->start_time,
+                    'shift1_end'          => $slot->end_time,
+                    'break_hours'         => $slot->break_hours ?? 0,
+                    'shift1_location'     => $slot->location,
+                    'shift1_postcode'     => $slot->site_postcode,
+                    'shift1_site_name'    => $slot->site_name,
+                    'shift1_site_address' => $slot->site_address,
                 ];
             }
 
             while (count($rows) < $requiredCount) {
                 $rows[] = [
-                    'guard_id'        => null,
-                    'shift1_start'    => null,
-                    'shift1_end'      => null,
-                    'break_hours'     => 0,
-                    'shift1_location' => null,
+                    'guard_id'            => null,
+                    'shift1_start'        => null,
+                    'shift1_end'          => null,
+                    'break_hours'         => 0,
+                    'shift1_location'     => null,
+                    'shift1_postcode'     => null,
+                    'shift1_site_name'    => null,
+                    'shift1_site_address' => null,
                 ];
             }
 
@@ -591,12 +684,14 @@ $locationValue = $assoc['location'] ?? $assoc['shift_location'] ?? $assoc['site_
                     $assignments[$date][$i]['break_hours'] = 0;
                 }
 
-                $assignments[$date][$i]['shift1_location'] = array_key_exists('shift1_location', $row)
-                    ? trim((string) ($row['shift1_location'] ?? ''))
-                    : null;
+                foreach (['shift1_postcode', 'shift1_site_name', 'shift1_site_address'] as $siteKey) {
+                    $assignments[$date][$i][$siteKey] = array_key_exists($siteKey, $row)
+                        ? trim((string) ($row[$siteKey] ?? ''))
+                        : null;
 
-                if ($assignments[$date][$i]['shift1_location'] === '') {
-                    $assignments[$date][$i]['shift1_location'] = null;
+                    if ($assignments[$date][$i][$siteKey] === '') {
+                        $assignments[$date][$i][$siteKey] = null;
+                    }
                 }
             }
         }
@@ -610,7 +705,9 @@ $locationValue = $assoc['location'] ?? $assoc['shift_location'] ?? $assoc['site_
             'assignments.*.*.shift1_start'    => 'nullable|date_format:H:i',
            'assignments.*.*.shift1_end'      => 'nullable|date_format:H:i',
             'assignments.*.*.break_hours'     => 'nullable|numeric|in:0,0.25,0.5,0.75,1',
-            'assignments.*.*.shift1_location' => 'nullable|string|max:255',
+            'assignments.*.*.shift1_postcode'     => 'nullable|string|max:255',
+            'assignments.*.*.shift1_site_name'    => 'nullable|string|max:255',
+            'assignments.*.*.shift1_site_address' => 'nullable|string|max:255',
         ]);
 
         $alreadyAssignedGuardIds = $event->guards()
@@ -655,21 +752,40 @@ $locationValue = $assoc['location'] ?? $assoc['shift_location'] ?? $assoc['site_
             }
         }
 
-        DB::transaction(function () use ($validated, $event, $requestedGuardIds) {
+        // Grandfather map: existing composed location keyed by date|guard,
+        // used as fallback when the new 3-field site inputs are left empty
+        // (so re-saving legacy events does not blank their location).
+        $oldLocationByDateGuard = $event->assignmentSlots()
+            ->get(['date', 'guard_id', 'location'])
+            ->filter(fn ($s) => $s->guard_id)
+            ->mapWithKeys(fn ($s) => [
+                optional($s->date)->toDateString() . '|' . (int) $s->guard_id => $s->location,
+            ])
+            ->all();
+
+        $cancellationSnapshot = $this->snapshotCancellations($event);
+
+        DB::transaction(function () use ($validated, $event, $requestedGuardIds, $oldLocationByDateGuard, $cancellationSnapshot) {
             $event->assignmentSlots()->delete();
             $event->guards()->detach();
             $event->shifts()->delete();
 
             foreach ($validated['assignments'] as $date => $rows) {
                 foreach (array_values($rows) as $index => $row) {
+                    $composed = $this->composeLocation($row['shift1_site_name'] ?? null, $row['shift1_postcode'] ?? null, $row['shift1_site_address'] ?? null);
+                    $finalLocation = $composed ?? (!empty($row['guard_id']) ? ($oldLocationByDateGuard[$date . '|' . (int) $row['guard_id']] ?? null) : null);
+
                     $event->assignmentSlots()->create([
-                        'date'        => $date,
-                        'slot_no'     => $index + 1,
-                        'guard_id'    => $row['guard_id'] ?? null,
-                        'start_time'  => $row['shift1_start'] ?? null,
-                        'end_time'    => $row['shift1_end'] ?? null,
-                        'break_hours' => $row['break_hours'] ?? 0,
-                        'location'    => $row['shift1_location'] ?? null,
+                        'date'          => $date,
+                        'slot_no'       => $index + 1,
+                        'guard_id'      => $row['guard_id'] ?? null,
+                        'start_time'    => $row['shift1_start'] ?? null,
+                        'end_time'      => $row['shift1_end'] ?? null,
+                        'break_hours'   => $row['break_hours'] ?? 0,
+                        'site_postcode' => $row['shift1_postcode'] ?? null,
+                        'site_name'     => $row['shift1_site_name'] ?? null,
+                        'site_address'  => $row['shift1_site_address'] ?? null,
+                        'location'      => $finalLocation,
                     ]);
                 }
             }
@@ -683,19 +799,27 @@ $locationValue = $assoc['location'] ?? $assoc['shift_location'] ?? $assoc['site_
                     $guardId = $row['guard_id'] ?? null;
 
                     if (!empty($guardId) && !empty($row['shift1_start']) && !empty($row['shift1_end'])) {
+                        $composed = $this->composeLocation($row['shift1_site_name'] ?? null, $row['shift1_postcode'] ?? null, $row['shift1_site_address'] ?? null);
+                        $finalLocation = $composed ?? ($oldLocationByDateGuard[$date . '|' . (int) $guardId] ?? null);
+
                         EventShift::create([
-                            'event_id'    => $event->id,
-                            'guard_id'    => (int) $guardId,
-                            'date'        => $date,
-                            'start_time'  => $row['shift1_start'],
-                            'end_time'    => $row['shift1_end'],
-                            'break_hours' => $row['break_hours'] ?? 0,
-                            'shift_no'    => 1,
-                            'location'    => $row['shift1_location'] ?? null,
+                            'event_id'      => $event->id,
+                            'guard_id'      => (int) $guardId,
+                            'date'          => $date,
+                            'start_time'    => $row['shift1_start'],
+                            'end_time'      => $row['shift1_end'],
+                            'break_hours'   => $row['break_hours'] ?? 0,
+                            'shift_no'      => 1,
+                            'site_postcode' => $row['shift1_postcode'] ?? null,
+                            'site_name'     => $row['shift1_site_name'] ?? null,
+                            'site_address'  => $row['shift1_site_address'] ?? null,
+                            'location'      => $finalLocation,
                         ]);
                     }
                 }
             }
+
+            $this->restoreCancellations($event, $cancellationSnapshot);
         });
 
         $event->load(['guards', 'shifts', 'assignmentSlots']);
@@ -772,7 +896,9 @@ $locationValue = $assoc['location'] ?? $assoc['shift_location'] ?? $assoc['site_
         'shift1_start'    => 'nullable|date_format:H:i',
         'shift1_end'      => 'nullable|date_format:H:i',
         'break_hours'     => 'nullable|numeric|in:0,0.25,0.5,0.75,1',
-        'shift1_location' => 'nullable|string|max:255',
+        'shift1_postcode'     => 'nullable|string|max:255',
+        'shift1_site_name'    => 'nullable|string|max:255',
+        'shift1_site_address' => 'nullable|string|max:255',
     ]);
 
     $date = $validated['date'];
@@ -783,13 +909,12 @@ $locationValue = $assoc['location'] ?? $assoc['shift_location'] ?? $assoc['site_
     $endTime = $validated['shift1_end'] ?? null;
     $breakHours = isset($validated['break_hours']) ? (float) $validated['break_hours'] : 0;
 
-    $location = array_key_exists('shift1_location', $validated)
-        ? trim((string) ($validated['shift1_location'] ?? ''))
-        : null;
-
-    if ($location === '') {
-        $location = null;
-    }
+    $sitePostcode = array_key_exists('shift1_postcode', $validated)
+        ? (trim((string) ($validated['shift1_postcode'] ?? '')) ?: null) : null;
+    $siteName = array_key_exists('shift1_site_name', $validated)
+        ? (trim((string) ($validated['shift1_site_name'] ?? '')) ?: null) : null;
+    $siteAddress = array_key_exists('shift1_site_address', $validated)
+        ? (trim((string) ($validated['shift1_site_address'] ?? '')) ?: null) : null;
 
     $oldSlot = $event->assignmentSlots()
         ->whereDate('date', $date)
@@ -835,7 +960,14 @@ $locationValue = $assoc['location'] ?? $assoc['shift_location'] ?? $assoc['site_
         }
     }
 
-    DB::transaction(function () use ($event, $date, $slotNo, $guardId, $startTime, $endTime, $breakHours, $location) {
+    // Compose location; fall back to the existing slot's legacy location
+    // when the 3 site fields are empty (grandfathering).
+    $composed = $this->composeLocation($siteName, $sitePostcode, $siteAddress);
+    $location = $composed ?? ($guardId ? optional($oldSlot)->location : null);
+
+    $cancellationSnapshot = $this->snapshotCancellations($event);
+
+    DB::transaction(function () use ($event, $date, $slotNo, $guardId, $startTime, $endTime, $breakHours, $location, $sitePostcode, $siteName, $siteAddress, $cancellationSnapshot) {
         $event->assignmentSlots()->updateOrCreate(
             [
                 'event_id' => $event->id,
@@ -843,11 +975,14 @@ $locationValue = $assoc['location'] ?? $assoc['shift_location'] ?? $assoc['site_
                 'slot_no' => $slotNo,
             ],
             [
-                'guard_id'    => $guardId,
-                'start_time'  => $startTime,
-                'end_time'    => $endTime,
-                'break_hours' => $breakHours,
-                'location'    => $location,
+                'guard_id'      => $guardId,
+                'start_time'    => $startTime,
+                'end_time'      => $endTime,
+                'break_hours'   => $breakHours,
+                'site_postcode' => $sitePostcode,
+                'site_name'     => $siteName,
+                'site_address'  => $siteAddress,
+                'location'      => $location,
             ]
         );
 
@@ -859,14 +994,17 @@ $locationValue = $assoc['location'] ?? $assoc['shift_location'] ?? $assoc['site_
 
         if ($guardId && $startTime && $endTime) {
             EventShift::create([
-                'event_id'    => $event->id,
-                'guard_id'    => (int) $guardId,
-                'date'        => $date,
-                'start_time'  => $startTime,
-                'end_time'    => $endTime,
-                'break_hours' => $breakHours,
-                'shift_no'    => $slotNo,
-                'location'    => $location,
+                'event_id'      => $event->id,
+                'guard_id'      => (int) $guardId,
+                'date'          => $date,
+                'start_time'    => $startTime,
+                'end_time'      => $endTime,
+                'break_hours'   => $breakHours,
+                'shift_no'      => $slotNo,
+                'site_postcode' => $sitePostcode,
+                'site_name'     => $siteName,
+                'site_address'  => $siteAddress,
+                'location'      => $location,
             ]);
         }
 
@@ -879,6 +1017,8 @@ $locationValue = $assoc['location'] ?? $assoc['shift_location'] ?? $assoc['site_
             ->all();
 
         $event->guards()->sync($currentGuardIds);
+
+        $this->restoreCancellations($event, $cancellationSnapshot);
     });
 
     $newSlot = $event->assignmentSlots()
@@ -967,7 +1107,9 @@ public function importAdditionalDays(Request $request, Event $event)
 
     $oldDailyGuards = $event->daily_guards ?? [];
 
-    DB::transaction(function () use ($event, $importedRows, $validated) {
+    $cancellationSnapshot = $this->snapshotCancellations($event);
+
+    DB::transaction(function () use ($event, $importedRows, $validated, $cancellationSnapshot) {
         $dailyGuards = collect($event->daily_guards ?? [])
             ->mapWithKeys(fn ($count, $date) => [$date => (int) $count]);
 
@@ -1055,6 +1197,8 @@ public function importAdditionalDays(Request $request, Event $event)
             ->all();
 
         $event->guards()->sync($currentGuardIds);
+
+        $this->restoreCancellations($event, $cancellationSnapshot);
     });
 
     Audit::log(
@@ -1184,7 +1328,9 @@ private function syncImportedSlotShift(Event $event, string $date, int $slotNo):
                 'client_type'    => $validated['client_type'],
                 'supplier_id'    => $validated['supplier_id'] ?? null,
                 'payment_terms'  => $validated['payment_terms'] ?? null,
-                'charge_rate'    => $validated['charge_rate'] ?? null,
+                'charge_rate'    => auth()->user()->can('view-charge-rate')
+                    ? ($validated['charge_rate'] ?? null)
+                    : $event->charge_rate,
                 'invoice_date'   => $validated['invoice_date'] ?? null,
                 'pay_rate'       => $validated['pay_rate'] ?? null,
                 'client_contact' => $validated['client_contact'] ?? null,
@@ -1222,6 +1368,12 @@ private function syncImportedSlotShift(Event $event, string $date, int $slotNo):
         $slotsByDate = $event->assignmentSlots
             ->sortBy('slot_no')
             ->groupBy(fn ($slot) => optional($slot->date)->toDateString());
+
+        // Cancelled shifts keyed date|guard, so rows can render red.
+        $cancelledShiftKeys = $event->shifts
+            ->filter(fn ($s) => $s->cancelled_at !== null && $s->guard_id)
+            ->map(fn ($s) => optional($s->date)->toDateString() . '|' . (int) $s->guard_id)
+            ->flip();
 
         $assignmentRowsByDate = [];
         $assignmentIssuesByDate = [];
@@ -1282,6 +1434,9 @@ private function syncImportedSlotShift(Event $event, string $date, int $slotNo):
 
     'issues'      => $rowIssues,
     'is_red'      => !empty($rowIssues),
+    'is_cancelled' => ($slot && $slot->guard_id)
+        ? $cancelledShiftKeys->has($date . '|' . (int) $slot->guard_id)
+        : false,
 ];
 
 
@@ -1344,6 +1499,28 @@ return view('events.show', compact(
         $filename
     );
 }
+
+    public function exportTimeSheetReduced(\App\Models\Event $event)
+    {
+        $date = $event->start_date ?? $event->invoice_date ?? $event->created_at;
+        $filename = str_replace('.xlsx', '-no-details.xlsx', $this->timeSheetFilename($event->event_name, $date));
+
+        return Excel::download(
+            new EventTimeSheetExport((int) $event->id, true),
+            $filename
+        );
+    }
+
+    public function exportStaffPaymentSheetReduced(\App\Models\Event $event)
+    {
+        $date = $event->start_date ?? $event->invoice_date ?? $event->created_at;
+        $filename = str_replace('.xlsx', '-no-details.xlsx', $this->staffPaymentSheetFilename($event->event_name, $date));
+
+        return Excel::download(
+            new EventStaffPaymentSheetExport((int) $event->id, true),
+            $filename
+        );
+    }
     
     
     

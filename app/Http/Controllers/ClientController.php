@@ -45,6 +45,7 @@ class ClientController extends Controller
             'email_address'  => 'required|email|unique:clients,email_address',
             'contact_number' => 'required|string|max:50',
             'payment_terms'  => 'nullable|string|max:255',
+            'color'          => 'nullable|regex:/^#[0-9A-Fa-f]{6}$/',
         ]);
 
         Client::create($data);
@@ -80,6 +81,7 @@ class ClientController extends Controller
             'email_address'  => 'required|email|unique:clients,email_address,' . $client->id,
             'contact_number' => 'required|string|max:50',
             'payment_terms'  => 'nullable|string|max:255',
+            'color'          => 'nullable|regex:/^#[0-9A-Fa-f]{6}$/',
         ]);
 
         $client->update($data);

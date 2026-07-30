@@ -18,7 +18,7 @@ class EventReportController extends Controller
             ->get()
             ->map(function ($event) {
 
-                $shiftsQuery = EventShift::query()->where('event_id', $event->id);
+                $shiftsQuery = EventShift::query()->where('event_id', $event->id)->whereNull('cancelled_at');
 
                 $totalShifts = (clone $shiftsQuery)->count();
 
@@ -30,6 +30,7 @@ class EventReportController extends Controller
                     'id'           => $event->id,
                     'event_name'   => $event->event_name,
                     'client_name'  => $event->client->name ?? '—',
+                    'client_color' => $event->client->color ?? null,
                     'start_date'   => $event->start_date,
                     'end_date'     => $event->end_date,
                     'total_days'   => $event->start_date && $event->end_date
@@ -48,6 +49,7 @@ class EventReportController extends Controller
     {
         $shifts = EventShift::query()
             ->where('event_id', $event->id)
+            ->whereNull('cancelled_at')
             ->get();
 
         $totalShifts = $shifts->count();
@@ -75,6 +77,7 @@ class EventReportController extends Controller
     {
         $shifts = EventShift::query()
             ->where('event_id', $event->id)
+            ->whereNull('cancelled_at')
             ->orderBy('date')
             ->get();
 

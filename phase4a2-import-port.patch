@@ -1,0 +1,13 @@
+diff --git a/resources/views/events/guards.blade.php b/resources/views/events/guards.blade.php
+index 07efd9e..f44b3ed 100644
+--- a/resources/views/events/guards.blade.php
++++ b/resources/views/events/guards.blade.php
+@@ -473,6 +473,8 @@ class="rounded bg-blue-600 px-4 py-1 text-white"
+ 
+ </div>
+ 
++@include('events.partials.import-additional-days')
++
+ <script>
+ function guardAssignment(dailyGuards, guards, shiftMode, existingAssignments, canAssign) {
+     let assigned = {};

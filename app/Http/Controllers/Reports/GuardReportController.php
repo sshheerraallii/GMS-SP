@@ -21,6 +21,7 @@ class GuardReportController extends Controller
             ->get(['id', 'event_name', 'start_date', 'end_date']);
 
         $recentPairs = EventShift::query()
+            ->whereNull('cancelled_at')
             ->selectRaw('event_id, guard_id, MAX(date) as last_worked_date')
             ->groupBy('event_id', 'guard_id')
             ->orderByDesc('last_worked_date')
@@ -54,6 +55,7 @@ class GuardReportController extends Controller
         $shifts = EventShift::query()
             ->where('event_id', $event->id)
             ->where('guard_id', $guard->id)
+            ->whereNull('cancelled_at')
             ->orderBy('date')
             ->orderBy('shift_no')
             ->get();

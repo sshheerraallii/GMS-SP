@@ -175,14 +175,22 @@
                                 $missingReach = blank($row['reaching_time'] ?? null);
 
                                 $rowBg = 'bg-white';
-                                if (!empty($row['is_missing'])) {
+                                $rowStyle = '';
+                                if (!empty($row['is_cancelled'])) {
+                                    $rowBg = 'bg-red-100';
+                                } elseif (!empty($row['is_missing'])) {
                                     $rowBg = 'bg-red-50';
                                 } elseif ($allOkNo || $onWayNo) {
                                     $rowBg = 'bg-amber-50';
+                                } elseif (!empty($row['client_color'])) {
+                                    // Client colour tints only otherwise-normal rows,
+                                    // so operational red/amber signals are never masked.
+                                    $rowBg = '';
+                                    $rowStyle = 'background-color: ' . $row['client_color'] . '26;';
                                 }
                             @endphp
 
-                            <tr class="border-t {{ $rowBg }}">
+                            <tr class="border-t {{ $rowBg }}" style="{{ $rowStyle }}">
                                 <td class="sticky left-0 z-20 border-r bg-inherit p-3 align-top">
                                     {{ \Carbon\Carbon::parse($row['date'])->format('d M Y') }}
                                 </td>
@@ -195,6 +203,9 @@
                                     <div class="font-semibold text-gray-900">
                                         {{ $row['guard_name'] ?? '-' }}
                                     </div>
+                                    @if(!empty($row['is_cancelled']))
+                                        <span class="mt-1 inline-flex items-center rounded-full bg-red-200 px-2 py-0.5 text-[11px] font-semibold text-red-800">Cancelled</span>
+                                    @endif
                                 </td>
 
                                 <td class="sticky left-[330px] z-20 border-r bg-inherit p-3 align-top">

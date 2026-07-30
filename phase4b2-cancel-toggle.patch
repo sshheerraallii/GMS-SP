@@ -1,0 +1,186 @@
+diff --git a/app/Http/Controllers/ChaseupController.php b/app/Http/Controllers/ChaseupController.php
+index 9f21dd8..5f3f9f2 100644
+--- a/app/Http/Controllers/ChaseupController.php
++++ b/app/Http/Controllers/ChaseupController.php
+@@ -126,6 +126,7 @@ public function index(Request $request)
+ 
+                 'missing_fields'     => $missingFields,
+                 'is_missing'         => !empty($missingFields),
++                'is_cancelled'       => $shift->cancelled_at !== null,
+             ];
+         });
+ 
+diff --git a/app/Http/Controllers/EventController.php b/app/Http/Controllers/EventController.php
+index 4475546..aa54203 100644
+--- a/app/Http/Controllers/EventController.php
++++ b/app/Http/Controllers/EventController.php
+@@ -520,6 +520,42 @@ private function restoreCancellations(Event $event, array $snapshot): void
+         }
+     }
+ 
++    /**
++     * Toggle the soft-cancel state of a guard's shift on a date.
++     * Reversible; keyed by the stable business identity
++     * (event_id, date, guard_id), never the volatile shift id.
++     */
++    public function toggleCancelShift(Request $request, Event $event)
++    {
++        $data = $request->validate([
++            'date'     => 'required|date',
++            'guard_id' => 'required|integer|exists:security_guards,id',
++        ]);
++
++        $date = Carbon::parse($data['date'])->toDateString();
++        $guardId = (int) $data['guard_id'];
++
++        $shifts = EventShift::query()
++            ->where('event_id', $event->id)
++            ->whereDate('date', $date)
++            ->where('guard_id', $guardId)
++            ->get();
++
++        if ($shifts->isEmpty()) {
++            return back()->withErrors(['cancel' => 'No shift found for that guard on that date.']);
++        }
++
++        $currentlyCancelled = $shifts->every(fn ($s) => $s->cancelled_at !== null);
++
++        EventShift::query()
++            ->where('event_id', $event->id)
++            ->whereDate('date', $date)
++            ->where('guard_id', $guardId)
++            ->update(['cancelled_at' => $currentlyCancelled ? null : now()]);
++
++        return back()->with('success', $currentlyCancelled ? 'Shift un-cancelled.' : 'Shift cancelled.');
++    }
++
+     public function guards(Event $event)
+     {
+         $event->load(['assignmentSlots.securityGuard']);
+@@ -1333,6 +1369,12 @@ public function show(Event $event)
+             ->sortBy('slot_no')
+             ->groupBy(fn ($slot) => optional($slot->date)->toDateString());
+ 
++        // Cancelled shifts keyed date|guard, so rows can render red.
++        $cancelledShiftKeys = $event->shifts
++            ->filter(fn ($s) => $s->cancelled_at !== null && $s->guard_id)
++            ->map(fn ($s) => optional($s->date)->toDateString() . '|' . (int) $s->guard_id)
++            ->flip();
++
+         $assignmentRowsByDate = [];
+         $assignmentIssuesByDate = [];
+ 
+@@ -1392,6 +1434,9 @@ public function show(Event $event)
+ 
+     'issues'      => $rowIssues,
+     'is_red'      => !empty($rowIssues),
++    'is_cancelled' => ($slot && $slot->guard_id)
++        ? $cancelledShiftKeys->has($date . '|' . (int) $slot->guard_id)
++        : false,
+ ];
+ 
+ 
+diff --git a/resources/views/chaseup/index.blade.php b/resources/views/chaseup/index.blade.php
+index d601d2d..58420b9 100644
+--- a/resources/views/chaseup/index.blade.php
++++ b/resources/views/chaseup/index.blade.php
+@@ -175,7 +175,9 @@ class="rounded-lg border px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-
+                                 $missingReach = blank($row['reaching_time'] ?? null);
+ 
+                                 $rowBg = 'bg-white';
+-                                if (!empty($row['is_missing'])) {
++                                if (!empty($row['is_cancelled'])) {
++                                    $rowBg = 'bg-red-100';
++                                } elseif (!empty($row['is_missing'])) {
+                                     $rowBg = 'bg-red-50';
+                                 } elseif ($allOkNo || $onWayNo) {
+                                     $rowBg = 'bg-amber-50';
+@@ -195,6 +197,9 @@ class="rounded-lg border px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-
+                                     <div class="font-semibold text-gray-900">
+                                         {{ $row['guard_name'] ?? '-' }}
+                                     </div>
++                                    @if(!empty($row['is_cancelled']))
++                                        <span class="mt-1 inline-flex items-center rounded-full bg-red-200 px-2 py-0.5 text-[11px] font-semibold text-red-800">Cancelled</span>
++                                    @endif
+                                 </td>
+ 
+                                 <td class="sticky left-[330px] z-20 border-r bg-inherit p-3 align-top">
+diff --git a/resources/views/events/show.blade.php b/resources/views/events/show.blade.php
+index 451c7f7..ba86960 100644
+--- a/resources/views/events/show.blade.php
++++ b/resources/views/events/show.blade.php
+@@ -333,7 +333,7 @@ class="text-indigo-700 hover:underline">
+                                         </thead>
+                                         <tbody>
+                                             @foreach($rows as $row)
+-                                                <tr class="{{ $row['is_red'] ? 'bg-red-50 hover:bg-red-50' : 'hover:bg-gray-50' }}">
++                                                <tr class="{{ $row['is_cancelled'] ? 'bg-red-100 hover:bg-red-100' : ($row['is_red'] ? 'bg-red-50 hover:bg-red-50' : 'hover:bg-gray-50') }}">
+                                                     <td class="border-b px-3 py-2">{{ $row['slot_no'] }}</td>
+                                                     <td class="border-b px-3 py-2">{{ $row['guard'] }}</td>
+                                                     <td class="border-b px-3 py-2">{{ $row['license'] }}</td>
+@@ -344,7 +344,11 @@ class="text-indigo-700 hover:underline">
+                                                     
+                                                     
+                                                     <td class="border-b px-3 py-2">
+-                                                        @if($row['is_red'])
++                                                        @if($row['is_cancelled'])
++                                                            <span class="inline-flex items-center rounded-full bg-red-200 px-2 py-1 text-[11px] font-semibold text-red-800">
++                                                                Cancelled
++                                                            </span>
++                                                        @elseif($row['is_red'])
+                                                             <div class="flex flex-wrap gap-1">
+                                                                 @foreach($row['issues'] as $issue)
+                                                                     <span class="inline-flex items-center rounded-full bg-red-100 px-2 py-1 text-[11px] font-medium text-red-700">
+@@ -361,15 +365,28 @@ class="text-indigo-700 hover:underline">
+                                                     
+                                                     <td class="border-b px-3 py-2 text-right">
+     @can('shifts.assign')
+-        @if($row['is_red'])
+-            <button type="button"
+-                    class="inline-flex items-center justify-center rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-blue-700"
+-                    @click='openEditor(@json($row))'>
+-                Edit
+-            </button>
+-        @else
+-            <span class="text-xs text-gray-400">—</span>
+-        @endif
++        <div class="flex items-center justify-end gap-2">
++            @if($row['guard_id'])
++                <form method="POST" action="{{ route('events.toggleCancelShift', $event->id) }}" class="inline-block">
++                    @csrf
++                    <input type="hidden" name="date" value="{{ $row['date'] }}">
++                    <input type="hidden" name="guard_id" value="{{ $row['guard_id'] }}">
++                    <button type="submit"
++                            class="inline-flex items-center justify-center rounded-md px-3 py-2 text-sm font-semibold text-white shadow {{ $row['is_cancelled'] ? 'bg-gray-600 hover:bg-gray-700' : 'bg-red-600 hover:bg-red-700' }}">
++                        {{ $row['is_cancelled'] ? 'Un-cancel' : 'Cancel' }}
++                    </button>
++                </form>
++            @endif
++            @if($row['is_red'])
++                <button type="button"
++                        class="inline-flex items-center justify-center rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-blue-700"
++                        @click='openEditor(@json($row))'>
++                    Edit
++                </button>
++            @elseif(!$row['guard_id'])
++                <span class="text-xs text-gray-400">—</span>
++            @endif
++        </div>
+     @endcan
+ </td>
+                                                     
+diff --git a/routes/web.php b/routes/web.php
+index 6ca12d5..ebfd17b 100644
+--- a/routes/web.php
++++ b/routes/web.php
+@@ -341,6 +341,10 @@
+                 Route::post('/{event}/guards/slot/save', [EventController::class, 'saveGuardSlot'])
+     ->whereNumber('event')
+     ->name('saveGuardSlot');
++
++            Route::post('/{event}/guards/toggle-cancel', [EventController::class, 'toggleCancelShift'])
++                ->whereNumber('event')
++                ->name('toggleCancelShift');
+                 
+         });
+     });

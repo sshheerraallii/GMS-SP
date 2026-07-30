@@ -80,6 +80,11 @@ class Event extends Model
         return $this->hasMany(\App\Models\EventShift::class);
     }
 
+    public function expenses()
+    {
+        return $this->hasMany(\App\Models\EventExpense::class);
+    }
+
     public function guards()
     {
         return $this->belongsToMany(

@@ -50,6 +50,7 @@ class GenerateDraftGuardInvoiceForEventGuard
             $shifts = EventShift::query()
                 ->where('event_id', $event->id)
                 ->where('guard_id', $guardId)
+                ->whereNull('cancelled_at')
                 ->whereNotNull('date')
                 ->whereNotNull('start_time')
                 ->whereNotNull('end_time')

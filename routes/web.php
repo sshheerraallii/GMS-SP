@@ -176,6 +176,14 @@ Route::middleware('auth')->group(function () {
                 ->whereNumber('guard')
                 ->whereNumber('event')
                 ->name('guards.show');
+
+            // Guard Statement (date-range payroll PDF) — Super Admin + Accountant only
+            Route::get('/guard-statement', [\App\Http\Controllers\Reports\GuardStatementController::class, 'form'])
+                ->middleware('can:view-guard-statement')
+                ->name('guardStatement.form');
+            Route::get('/guard-statement/download', [\App\Http\Controllers\Reports\GuardStatementController::class, 'download'])
+                ->middleware('can:view-guard-statement')
+                ->name('guardStatement.download');
         });
 
     /*
@@ -285,6 +293,14 @@ Route::middleware('auth')->group(function () {
     Route::get('/{event}/time-sheet', [EventController::class, 'exportTimeSheet'])
     ->whereNumber('event')
     ->name('timeSheet');
+
+            Route::get('/{event}/time-sheet-no-details', [EventController::class, 'exportTimeSheetReduced'])
+                ->whereNumber('event')
+                ->name('timeSheetReduced');
+
+            Route::get('/{event}/staff-payment-sheet-no-details', [EventController::class, 'exportStaffPaymentSheetReduced'])
+                ->whereNumber('event')
+                ->name('staffPaymentSheetReduced');
                 
 
             Route::get('/{event}', [EventController::class, 'show'])
@@ -341,6 +357,10 @@ Route::post('/{event}/additional-days-import', [EventController::class, 'importA
                 Route::post('/{event}/guards/slot/save', [EventController::class, 'saveGuardSlot'])
     ->whereNumber('event')
     ->name('saveGuardSlot');
+
+            Route::post('/{event}/guards/toggle-cancel', [EventController::class, 'toggleCancelShift'])
+                ->whereNumber('event')
+                ->name('toggleCancelShift');
                 
         });
     });
@@ -350,8 +370,27 @@ Route::post('/{event}/additional-days-import', [EventController::class, 'importA
     | ChaseUp
     |--------------------------------------------------------------------------
     */
+    /*
+    |--------------------------------------------------------------------------
+    | Executive homepage (Super Admin only)
+    |--------------------------------------------------------------------------
+    */
+    Route::middleware('can:view-executive')
+        ->prefix('executive')
+        ->name('executive.')
+        ->group(function () {
+            Route::get('/', [\App\Http\Controllers\ExecutiveController::class, 'index'])->name('index');
+            Route::post('/events/{event}/charge-rate', [\App\Http\Controllers\ExecutiveController::class, 'setChargeRate'])
+                ->whereNumber('event')->name('chargeRate');
+            Route::post('/events/{event}/expenses', [\App\Http\Controllers\ExecutiveController::class, 'storeExpense'])
+                ->whereNumber('event')->name('expenses.store');
+            Route::delete('/expenses/{eventExpense}', [\App\Http\Controllers\ExecutiveController::class, 'deleteExpense'])
+                ->whereNumber('eventExpense')->name('expenses.destroy');
+        });
+
     Route::prefix('chaseup')->name('chaseup.')->group(function () {
         Route::get('/', [ChaseupController::class, 'index'])->name('index');
+        Route::get('/reminders', [ChaseupController::class, 'reminders'])->name('reminders');
         Route::post('/shift/{eventShift}/field', [ChaseupController::class, 'updateField'])
             ->whereNumber('eventShift')
             ->name('updateField');

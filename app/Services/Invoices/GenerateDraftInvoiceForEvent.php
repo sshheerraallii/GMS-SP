@@ -92,6 +92,7 @@ class GenerateDraftInvoiceForEvent
 
             $shifts = EventShift::query()
                 ->where('event_id', $event->id)
+                ->whereNull('cancelled_at')
                 ->whereNotNull('date')
                 ->whereNotNull('start_time')
                 ->whereNotNull('end_time')

@@ -93,6 +93,13 @@
 
 
 
+                @can('view-executive')
+                    <a href="{{ route('executive.index') }}"
+                       class="{{ $navBase }} {{ request()->routeIs('executive.*') ? $active : $idle }}">
+                        Executive
+                    </a>
+                @endcan
+
                 @can('users.manage')
                     <a href="{{ route('users.index') }}"
                        class="{{ $navBase }} {{ request()->routeIs('users.*') ? $active : $idle }}">
@@ -176,6 +183,13 @@
 </a>
 
 
+                @can('view-executive')
+                    <a href="{{ route('executive.index') }}"
+                       class="{{ $mBase }} {{ request()->routeIs('executive.*') ? $mActive : $mIdle }}">
+                        Executive
+                    </a>
+                @endcan
+
                 @can('users.manage')
                     <a href="{{ route('users.index') }}"
                        class="{{ $mBase }} {{ request()->routeIs('users.*') ? $mActive : $mIdle }}">
@@ -236,6 +250,82 @@
     </div>
 
     
+
+    @auth
+    {{-- Chaseup shift reminders: client-side poller + toasts (no cron, UK time). --}}
+    <div id="shiftReminderToasts" class="fixed top-4 right-4 z-[9999] flex w-80 max-w-[90vw] flex-col gap-2"></div>
+    <script>
+    (function () {
+        const ENDPOINT = "{{ route('chaseup.reminders') }}";
+        const TIERS = [120, 90, 60];   // minutes before shift start
+        const CATCH = 30;              // catch window (min) per tier
+        const POLL_MS = 60000;
+        const STORE_KEY = 'gms_shift_reminders_shown';
+
+        function loadShown() {
+            try { return new Set(JSON.parse(localStorage.getItem(STORE_KEY) || '[]')); }
+            catch (e) { return new Set(); }
+        }
+        function saveShown(set) {
+            try { localStorage.setItem(STORE_KEY, JSON.stringify([].concat([...set]).slice(-500))); } catch (e) {}
+        }
+
+        function showToast(r, tier) {
+            const wrap = document.getElementById('shiftReminderToasts');
+            if (!wrap) return;
+            const label = tier === 60 ? '1 hour' : (tier === 90 ? '1.5 hours' : '2 hours');
+            const el = document.createElement('div');
+            el.className = 'rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-gray-800 shadow-lg';
+            let html = '<div class="flex items-start justify-between gap-2"><div>';
+            html += '<div class="font-semibold text-amber-800">Shift in ~' + label + '</div>';
+            html += '<div class="mt-0.5 font-medium">' + (r.guard_name || 'Guard') + '</div>';
+            if (r.label)    html += '<div class="text-xs text-gray-600">' + r.label + '</div>';
+            if (r.location) html += '<div class="text-xs text-gray-600">' + r.location + '</div>';
+            html += '<div class="mt-0.5 text-xs text-gray-600">Starts ' + r.start_time + ' &middot; ' + r.date + '</div>';
+            html += '</div><button type="button" class="text-lg leading-none text-gray-400 hover:text-gray-700">&times;</button></div>';
+            el.innerHTML = html;
+            el.querySelector('button').addEventListener('click', function () { el.remove(); });
+            wrap.appendChild(el);
+            setTimeout(function () { el.remove(); }, 60000);
+        }
+
+        async function poll() {
+            let data;
+            try {
+                const res = await fetch(ENDPOINT, { headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' } });
+                if (!res.ok) return;
+                data = await res.json();
+            } catch (e) { return; }
+
+            const shown = loadShown();
+            const now = Date.now();
+
+            (data.reminders || []).forEach(function (r) {
+                const start = new Date(r.starts_at).getTime();
+                if (isNaN(start)) return;
+                const mins = (start - now) / 60000;
+                if (mins < 0) return;
+
+                for (let i = 0; i < TIERS.length; i++) {
+                    const T = TIERS[i];
+                    if (mins <= T && mins > (T - CATCH)) {
+                        const id = r.key + '|' + T;
+                        if (!shown.has(id)) { showToast(r, T); shown.add(id); }
+                        break; // most urgent applicable tier only
+                    }
+                }
+            });
+
+            saveShown(shown);
+        }
+
+        document.addEventListener('DOMContentLoaded', function () {
+            poll();
+            setInterval(poll, POLL_MS);
+        });
+    })();
+    </script>
+    @endauth
 
 </body>
 </html>

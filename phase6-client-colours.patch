@@ -1,0 +1,155 @@
+diff --git a/app/Http/Controllers/ChaseupController.php b/app/Http/Controllers/ChaseupController.php
+index 5f3f9f2..f96019c 100644
+--- a/app/Http/Controllers/ChaseupController.php
++++ b/app/Http/Controllers/ChaseupController.php
+@@ -27,7 +27,7 @@ public function index(Request $request)
+ 
+         $query = EventShift::query()
+             ->with([
+-                'event.client:id,name',
++                'event.client:id,name,color',
+                 'securityGuard:id,fullname',
+             ])
+             ->whereDate('date', $selectedDate);
+@@ -111,6 +111,7 @@ public function index(Request $request)
+                 'break_hours'        => $shift->break_hours !== null ? (float) $shift->break_hours : null,
+                 'total_hours'        => $totalHours,
+                 'client_name'        => $clientName,
++                'client_color'       => optional(optional($shift->event)->client)->color,
+                 'event_id'           => (int) $shift->event_id,
+                 'event_name'         => $eventName,
+                 'client_event_label' => trim(collect([$clientName, $eventName])->filter()->implode(' · ')) ?: null,
+diff --git a/app/Http/Controllers/ClientController.php b/app/Http/Controllers/ClientController.php
+index ff77041..b692e76 100644
+--- a/app/Http/Controllers/ClientController.php
++++ b/app/Http/Controllers/ClientController.php
+@@ -45,6 +45,7 @@ public function store(Request $request)
+             'email_address'  => 'required|email|unique:clients,email_address',
+             'contact_number' => 'required|string|max:50',
+             'payment_terms'  => 'nullable|string|max:255',
++            'color'          => 'nullable|regex:/^#[0-9A-Fa-f]{6}$/',
+         ]);
+ 
+         Client::create($data);
+@@ -80,6 +81,7 @@ public function update(Request $request, $id)
+             'email_address'  => 'required|email|unique:clients,email_address,' . $client->id,
+             'contact_number' => 'required|string|max:50',
+             'payment_terms'  => 'nullable|string|max:255',
++            'color'          => 'nullable|regex:/^#[0-9A-Fa-f]{6}$/',
+         ]);
+ 
+         $client->update($data);
+diff --git a/app/Http/Controllers/Reports/EventReportController.php b/app/Http/Controllers/Reports/EventReportController.php
+index 8b93395..04cd259 100644
+--- a/app/Http/Controllers/Reports/EventReportController.php
++++ b/app/Http/Controllers/Reports/EventReportController.php
+@@ -30,6 +30,7 @@ public function index()
+                     'id'           => $event->id,
+                     'event_name'   => $event->event_name,
+                     'client_name'  => $event->client->name ?? '—',
++                    'client_color' => $event->client->color ?? null,
+                     'start_date'   => $event->start_date,
+                     'end_date'     => $event->end_date,
+                     'total_days'   => $event->start_date && $event->end_date
+diff --git a/app/Models/Client.php b/app/Models/Client.php
+index f8b4a9d..4d3faec 100644
+--- a/app/Models/Client.php
++++ b/app/Models/Client.php
+@@ -16,6 +16,7 @@ class Client extends Model
+         'contact_number',
+         'payment_terms',
+         'type',
++        'color',
+     ];
+ 
+     // Client has many Events
+diff --git a/resources/views/chaseup/index.blade.php b/resources/views/chaseup/index.blade.php
+index 58420b9..9c7eeba 100644
+--- a/resources/views/chaseup/index.blade.php
++++ b/resources/views/chaseup/index.blade.php
+@@ -175,16 +175,22 @@ class="rounded-lg border px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-
+                                 $missingReach = blank($row['reaching_time'] ?? null);
+ 
+                                 $rowBg = 'bg-white';
++                                $rowStyle = '';
+                                 if (!empty($row['is_cancelled'])) {
+                                     $rowBg = 'bg-red-100';
+                                 } elseif (!empty($row['is_missing'])) {
+                                     $rowBg = 'bg-red-50';
+                                 } elseif ($allOkNo || $onWayNo) {
+                                     $rowBg = 'bg-amber-50';
++                                } elseif (!empty($row['client_color'])) {
++                                    // Client colour tints only otherwise-normal rows,
++                                    // so operational red/amber signals are never masked.
++                                    $rowBg = '';
++                                    $rowStyle = 'background-color: ' . $row['client_color'] . '26;';
+                                 }
+                             @endphp
+ 
+-                            <tr class="border-t {{ $rowBg }}">
++                            <tr class="border-t {{ $rowBg }}" style="{{ $rowStyle }}">
+                                 <td class="sticky left-0 z-20 border-r bg-inherit p-3 align-top">
+                                     {{ \Carbon\Carbon::parse($row['date'])->format('d M Y') }}
+                                 </td>
+diff --git a/resources/views/clients/create.blade.php b/resources/views/clients/create.blade.php
+index cd66b50..e9fb78d 100644
+--- a/resources/views/clients/create.blade.php
++++ b/resources/views/clients/create.blade.php
+@@ -49,6 +49,8 @@ class="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none foc
+             @enderror
+         </div>
+ 
++        @include('clients.partials.color-picker', ['current' => old('color')])
++
+         <!-- Buttons -->
+         <div class="flex space-x-3">
+             <button type="submit"
+diff --git a/resources/views/clients/edit.blade.php b/resources/views/clients/edit.blade.php
+index 4b7d8f7..b8b2b4e 100644
+--- a/resources/views/clients/edit.blade.php
++++ b/resources/views/clients/edit.blade.php
+@@ -36,6 +36,8 @@ class="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none foc
+                    class="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+         </div>
+ 
++        @include('clients.partials.color-picker', ['current' => old('color', $client->color)])
++
+         <!-- Buttons -->
+         <div class="flex space-x-3">
+             <button type="submit"
+diff --git a/resources/views/events/index.blade.php b/resources/views/events/index.blade.php
+index e921dcf..f562cdb 100644
+--- a/resources/views/events/index.blade.php
++++ b/resources/views/events/index.blade.php
+@@ -105,7 +105,12 @@ class="fixed top-5 right-5 z-50 bg-emerald-600 text-white px-4 py-3 rounded shad
+                         </td>
+ 
+                         <td class="border p-2">
+-                            {{ $event->client->name ?? '-' }}
++                            <div class="flex items-center gap-2">
++                                @if($event->client?->color)
++                                    <span class="inline-block h-3 w-3 shrink-0 rounded-full" style="background: {{ $event->client->color }};"></span>
++                                @endif
++                                <span>{{ $event->client->name ?? '-' }}</span>
++                            </div>
+                         </td>
+ 
+                         <td class="border p-2 text-center">
+diff --git a/resources/views/reports/events/index.blade.php b/resources/views/reports/events/index.blade.php
+index 844589d..c67dbcb 100644
+--- a/resources/views/reports/events/index.blade.php
++++ b/resources/views/reports/events/index.blade.php
+@@ -35,7 +35,12 @@
+                         </td>
+ 
+                         <td class="px-4 py-3">
+-                            {{ $event['client_name'] }}
++                            <div class="flex items-center gap-2">
++                                @if(!empty($event['client_color']))
++                                    <span class="inline-block h-3 w-3 shrink-0 rounded-full" style="background: {{ $event['client_color'] }};"></span>
++                                @endif
++                                <span>{{ $event['client_name'] }}</span>
++                            </div>
+                         </td>
+ 
+                         <td class="px-4 py-3 text-center">

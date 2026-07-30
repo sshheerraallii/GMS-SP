@@ -20,13 +20,27 @@ class EventShift extends Model
         'end_time',
         'break_hours',
         'location',
+        'site_postcode',
+        'site_name',
+        'site_address',
         'shift_no',
+        'cancelled_at',
     ];
 
     protected $casts = [
         'date' => 'date',
         'break_hours' => 'decimal:2',
+        'cancelled_at' => 'datetime',
     ];
+
+    /**
+     * Only non-cancelled shifts. Cancelled shifts are omitted from all
+     * billing, pay sheets, timesheets and reports (they count as zero).
+     */
+    public function scopeActive($query)
+    {
+        return $query->whereNull('cancelled_at');
+    }
 
     /**
      * Each shift belongs to an event

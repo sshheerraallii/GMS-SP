@@ -1,0 +1,228 @@
+diff --git a/app/Exports/EventStaffPaymentSheetExport.php b/app/Exports/EventStaffPaymentSheetExport.php
+index f66fa39..81f7cce 100644
+--- a/app/Exports/EventStaffPaymentSheetExport.php
++++ b/app/Exports/EventStaffPaymentSheetExport.php
+@@ -14,10 +14,12 @@
+ class EventStaffPaymentSheetExport implements FromCollection, WithHeadings, ShouldAutoSize, WithTitle
+ {
+     protected Event $event;
++    protected bool $reduced;
+ 
+-    public function __construct(int $eventId)
++    public function __construct(int $eventId, bool $reduced = false)
+     {
+         $this->event = Event::query()->findOrFail($eventId);
++        $this->reduced = $reduced;
+     }
+ 
+     public function collection(): Collection
+@@ -62,31 +64,38 @@ public function collection(): Collection
+             $numericRate = is_null($rate) ? null : (float) $rate;
+             $totalPay = is_null($numericRate) ? null : round($totalHours * $numericRate, 2);
+ 
+-            return [
+-                'Name'           => $row->fullname ?? '',
+-                'Total Hours'    => number_format($totalHours, 2, '.', ''),
+-                'Rate'           => is_null($numericRate) ? '' : number_format($numericRate, 2, '.', ''),
+-                'Total Pay'      => is_null($totalPay) ? '' : number_format($totalPay, 2, '.', ''),
+-                'Sort Code'      => $row->sort_code ?? '',
+-                'Account Number' => $row->account_number ?? '',
++            $out = [
++                'Name'        => $row->fullname ?? '',
++                'Total Hours' => number_format($totalHours, 2, '.', ''),
++                'Rate'        => is_null($numericRate) ? '' : number_format($numericRate, 2, '.', ''),
++                'Total Pay'   => is_null($totalPay) ? '' : number_format($totalPay, 2, '.', ''),
+             ];
++
++            if ($this->reduced) {
++                return $out;
++            }
++
++            $out['Sort Code'] = $row->sort_code ?? '';
++            $out['Account Number'] = $row->account_number ?? '';
++
++            return $out;
+         });
+     }
+ 
+     public function headings(): array
+     {
+-        return [
++        $base = [
+             'Name',
+             'Total Hours',
+             'Rate',
+             'Total Pay',
+-            'Sort Code',
+-            'Account Number',
+         ];
++
++        return $this->reduced ? $base : array_merge($base, ['Sort Code', 'Account Number']);
+     }
+ 
+     public function title(): string
+     {
+-        return 'Staff Payment Sheet';
++        return $this->reduced ? 'Payment (No Bank)' : 'Staff Payment Sheet';
+     }
+ }
+\ No newline at end of file
+diff --git a/app/Exports/EventTimeSheetExport.php b/app/Exports/EventTimeSheetExport.php
+index c73f637..cd06aab 100644
+--- a/app/Exports/EventTimeSheetExport.php
++++ b/app/Exports/EventTimeSheetExport.php
+@@ -13,11 +13,11 @@
+ 
+ class EventTimeSheetExport implements FromCollection, WithHeadings, ShouldAutoSize, WithTitle
+ {
+-    public function __construct(private int $eventId) {}
++    public function __construct(private int $eventId, private bool $reduced = false) {}
+ 
+     public function headings(): array
+     {
+-        return [
++        $base = [
+             'Sr',
+             'Date',
+             'First Names',
+@@ -27,6 +27,13 @@ public function headings(): array
+             'End Time',
+             'Break',
+             'Total Hours',
++        ];
++
++        if ($this->reduced) {
++            return $base;
++        }
++
++        return array_merge($base, [
+             'Role',
+             'SIA',
+             'Expiry',
+@@ -39,7 +46,7 @@ public function headings(): array
+             'Sort Code',
+             'Account Number',
+             'Beneficiary',
+-        ];
++        ]);
+     }
+ 
+     public function collection(): Collection
+@@ -102,7 +109,7 @@ public function collection(): Collection
+                 $first = implode(' ', $parts);
+             }
+ 
+-            return [
++            $base = [
+                 $idx + 1,
+                 $row->date ? Carbon::parse($row->date)->format('Y-m-d') : '',
+                 $first,
+@@ -112,6 +119,13 @@ public function collection(): Collection
+                 $row->end_time ? substr((string) $row->end_time, 0, 5) : '',
+                 number_format((float) ($row->break_hours ?? 0), 2, '.', ''),
+                 number_format((float) ($row->total_hours ?? 0), 2, '.', ''),
++            ];
++
++            if ($this->reduced) {
++                return $base;
++            }
++
++            return array_merge($base, [
+                 $row->category ?? '',
+                 $row->license_number ?? '',
+                 $row->license_exp_date ? Carbon::parse($row->license_exp_date)->format('Y-m-d') : '',
+@@ -124,12 +138,12 @@ public function collection(): Collection
+                 $row->sort_code ?? '',
+                 $row->account_number ?? '',
+                 $row->beneficiary_name ?? '',
+-            ];
++            ]);
+         });
+     }
+ 
+     public function title(): string
+     {
+-        return 'Time Sheet';
++        return $this->reduced ? 'Time Sheet (No Details)' : 'Time Sheet';
+     }
+ }
+\ No newline at end of file
+diff --git a/app/Http/Controllers/EventController.php b/app/Http/Controllers/EventController.php
+index aa54203..11df4c3 100644
+--- a/app/Http/Controllers/EventController.php
++++ b/app/Http/Controllers/EventController.php
+@@ -1499,6 +1499,28 @@ public function exportTimeSheet(\App\Models\Event $event)
+         $filename
+     );
+ }
++
++    public function exportTimeSheetReduced(\App\Models\Event $event)
++    {
++        $date = $event->start_date ?? $event->invoice_date ?? $event->created_at;
++        $filename = str_replace('.xlsx', '-no-details.xlsx', $this->timeSheetFilename($event->event_name, $date));
++
++        return Excel::download(
++            new EventTimeSheetExport((int) $event->id, true),
++            $filename
++        );
++    }
++
++    public function exportStaffPaymentSheetReduced(\App\Models\Event $event)
++    {
++        $date = $event->start_date ?? $event->invoice_date ?? $event->created_at;
++        $filename = str_replace('.xlsx', '-no-details.xlsx', $this->staffPaymentSheetFilename($event->event_name, $date));
++
++        return Excel::download(
++            new EventStaffPaymentSheetExport((int) $event->id, true),
++            $filename
++        );
++    }
+     
+     
+     
+diff --git a/resources/views/events/show.blade.php b/resources/views/events/show.blade.php
+index ba86960..7ff95b0 100644
+--- a/resources/views/events/show.blade.php
++++ b/resources/views/events/show.blade.php
+@@ -54,12 +54,22 @@ class="inline-flex items-center justify-center rounded-lg bg-blue-600 px-4 py-2.
+                                class="inline-flex items-center justify-center rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition duration-150 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-300">
+                                 Download Staff Payment Sheet
+                             </a>
++
++                            <a href="{{ route('events.staffPaymentSheetReduced', $event->id) }}"
++                               class="inline-flex items-center justify-center rounded-lg border border-blue-600 bg-white px-4 py-2.5 text-sm font-semibold text-blue-700 shadow-sm transition duration-150 hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-300">
++                                Payment Sheet (No Bank Details)
++                            </a>
+                             
+                             
+                             <a href="{{ route('events.timeSheet', $event->id) }}"
+    class="inline-flex items-center justify-center rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition duration-150 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-300">
+     Download Time Sheet
+ </a>
++
++                            <a href="{{ route('events.timeSheetReduced', $event->id) }}"
++   class="inline-flex items-center justify-center rounded-lg border border-blue-600 bg-white px-4 py-2.5 text-sm font-semibold text-blue-700 shadow-sm transition duration-150 hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-300">
++    Time Sheet (No Personal Details)
++</a>
+                             
+                             
+ 
+diff --git a/routes/web.php b/routes/web.php
+index ebfd17b..99fd145 100644
+--- a/routes/web.php
++++ b/routes/web.php
+@@ -285,6 +285,14 @@
+     Route::get('/{event}/time-sheet', [EventController::class, 'exportTimeSheet'])
+     ->whereNumber('event')
+     ->name('timeSheet');
++
++            Route::get('/{event}/time-sheet-no-details', [EventController::class, 'exportTimeSheetReduced'])
++                ->whereNumber('event')
++                ->name('timeSheetReduced');
++
++            Route::get('/{event}/staff-payment-sheet-no-details', [EventController::class, 'exportStaffPaymentSheetReduced'])
++                ->whereNumber('event')
++                ->name('staffPaymentSheetReduced');
+                 
+ 
+             Route::get('/{event}', [EventController::class, 'show'])

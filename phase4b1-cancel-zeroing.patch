@@ -1,0 +1,245 @@
+diff --git a/app/Exports/EventStaffPaymentSheetExport.php b/app/Exports/EventStaffPaymentSheetExport.php
+index e153e61..f66fa39 100644
+--- a/app/Exports/EventStaffPaymentSheetExport.php
++++ b/app/Exports/EventStaffPaymentSheetExport.php
+@@ -28,6 +28,7 @@ public function collection(): Collection
+             ->from('event_shifts as es')
+             ->join('security_guards as sg', 'sg.id', '=', 'es.guard_id')
+             ->where('es.event_id', $this->event->id)
++            ->whereNull('es.cancelled_at')
+             ->select([
+                 'es.guard_id',
+                 'sg.fullname',
+diff --git a/app/Exports/EventTimeSheetExport.php b/app/Exports/EventTimeSheetExport.php
+index 1763295..c73f637 100644
+--- a/app/Exports/EventTimeSheetExport.php
++++ b/app/Exports/EventTimeSheetExport.php
+@@ -48,6 +48,7 @@ public function collection(): Collection
+             ->from('event_shifts as es')
+             ->join('security_guards as sg', 'sg.id', '=', 'es.guard_id')
+             ->where('es.event_id', $this->eventId)
++            ->whereNull('es.cancelled_at')
+             ->select([
+                 'es.date',
+                 'es.start_time',
+diff --git a/app/Http/Controllers/EventController.php b/app/Http/Controllers/EventController.php
+index b3b5fc3..4475546 100644
+--- a/app/Http/Controllers/EventController.php
++++ b/app/Http/Controllers/EventController.php
+@@ -484,6 +484,42 @@ private function composeLocation($siteName, $postcode, $siteAddress): ?string
+         return count($parts) ? implode(', ', $parts) : null;
+     }
+ 
++    /**
++     * Snapshot an event's current shift cancellations, keyed by
++     * "date|guard_id" => original cancelled_at. Used to survive the
++     * delete-and-recreate save pattern (cancelled_at lives on a shift
++     * row that is destroyed on every save).
++     */
++    private function snapshotCancellations(Event $event): array
++    {
++        return EventShift::query()
++            ->where('event_id', $event->id)
++            ->whereNotNull('cancelled_at')
++            ->whereNotNull('guard_id')
++            ->get(['date', 'guard_id', 'cancelled_at'])
++            ->mapWithKeys(fn ($s) => [
++                optional($s->date)->toDateString() . '|' . (int) $s->guard_id => $s->cancelled_at,
++            ])
++            ->all();
++    }
++
++    /**
++     * Re-apply a cancellation snapshot to freshly-recreated shifts,
++     * preserving the original cancelled_at timestamp.
++     */
++    private function restoreCancellations(Event $event, array $snapshot): void
++    {
++        foreach ($snapshot as $key => $cancelledAt) {
++            [$date, $guardId] = explode('|', $key, 2);
++
++            EventShift::query()
++                ->where('event_id', $event->id)
++                ->whereDate('date', $date)
++                ->where('guard_id', (int) $guardId)
++                ->update(['cancelled_at' => $cancelledAt]);
++        }
++    }
++
+     public function guards(Event $event)
+     {
+         $event->load(['assignmentSlots.securityGuard']);
+@@ -691,7 +727,9 @@ public function updateGuards(Request $request, Event $event)
+             ])
+             ->all();
+ 
+-        DB::transaction(function () use ($validated, $event, $requestedGuardIds, $oldLocationByDateGuard) {
++        $cancellationSnapshot = $this->snapshotCancellations($event);
++
++        DB::transaction(function () use ($validated, $event, $requestedGuardIds, $oldLocationByDateGuard, $cancellationSnapshot) {
+             $event->assignmentSlots()->delete();
+             $event->guards()->detach();
+             $event->shifts()->delete();
+@@ -744,6 +782,8 @@ public function updateGuards(Request $request, Event $event)
+                     }
+                 }
+             }
++
++            $this->restoreCancellations($event, $cancellationSnapshot);
+         });
+ 
+         $event->load(['guards', 'shifts', 'assignmentSlots']);
+@@ -889,7 +929,9 @@ public function saveGuardSlot(Request $request, Event $event)
+     $composed = $this->composeLocation($siteName, $sitePostcode, $siteAddress);
+     $location = $composed ?? ($guardId ? optional($oldSlot)->location : null);
+ 
+-    DB::transaction(function () use ($event, $date, $slotNo, $guardId, $startTime, $endTime, $breakHours, $location, $sitePostcode, $siteName, $siteAddress) {
++    $cancellationSnapshot = $this->snapshotCancellations($event);
++
++    DB::transaction(function () use ($event, $date, $slotNo, $guardId, $startTime, $endTime, $breakHours, $location, $sitePostcode, $siteName, $siteAddress, $cancellationSnapshot) {
+         $event->assignmentSlots()->updateOrCreate(
+             [
+                 'event_id' => $event->id,
+@@ -939,6 +981,8 @@ public function saveGuardSlot(Request $request, Event $event)
+             ->all();
+ 
+         $event->guards()->sync($currentGuardIds);
++
++        $this->restoreCancellations($event, $cancellationSnapshot);
+     });
+ 
+     $newSlot = $event->assignmentSlots()
+@@ -1027,7 +1071,9 @@ public function importAdditionalDays(Request $request, Event $event)
+ 
+     $oldDailyGuards = $event->daily_guards ?? [];
+ 
+-    DB::transaction(function () use ($event, $importedRows, $validated) {
++    $cancellationSnapshot = $this->snapshotCancellations($event);
++
++    DB::transaction(function () use ($event, $importedRows, $validated, $cancellationSnapshot) {
+         $dailyGuards = collect($event->daily_guards ?? [])
+             ->mapWithKeys(fn ($count, $date) => [$date => (int) $count]);
+ 
+@@ -1115,6 +1161,8 @@ public function importAdditionalDays(Request $request, Event $event)
+             ->all();
+ 
+         $event->guards()->sync($currentGuardIds);
++
++        $this->restoreCancellations($event, $cancellationSnapshot);
+     });
+ 
+     Audit::log(
+diff --git a/app/Http/Controllers/Reports/EventReportController.php b/app/Http/Controllers/Reports/EventReportController.php
+index 09ee44d..8b93395 100644
+--- a/app/Http/Controllers/Reports/EventReportController.php
++++ b/app/Http/Controllers/Reports/EventReportController.php
+@@ -18,7 +18,7 @@ public function index()
+             ->get()
+             ->map(function ($event) {
+ 
+-                $shiftsQuery = EventShift::query()->where('event_id', $event->id);
++                $shiftsQuery = EventShift::query()->where('event_id', $event->id)->whereNull('cancelled_at');
+ 
+                 $totalShifts = (clone $shiftsQuery)->count();
+ 
+@@ -48,6 +48,7 @@ public function show(Event $event)
+     {
+         $shifts = EventShift::query()
+             ->where('event_id', $event->id)
++            ->whereNull('cancelled_at')
+             ->get();
+ 
+         $totalShifts = $shifts->count();
+@@ -75,6 +76,7 @@ public function detailed(Event $event)
+     {
+         $shifts = EventShift::query()
+             ->where('event_id', $event->id)
++            ->whereNull('cancelled_at')
+             ->orderBy('date')
+             ->get();
+ 
+diff --git a/app/Http/Controllers/Reports/GuardReportController.php b/app/Http/Controllers/Reports/GuardReportController.php
+index 1f04732..731dede 100644
+--- a/app/Http/Controllers/Reports/GuardReportController.php
++++ b/app/Http/Controllers/Reports/GuardReportController.php
+@@ -21,6 +21,7 @@ public function index()
+             ->get(['id', 'event_name', 'start_date', 'end_date']);
+ 
+         $recentPairs = EventShift::query()
++            ->whereNull('cancelled_at')
+             ->selectRaw('event_id, guard_id, MAX(date) as last_worked_date')
+             ->groupBy('event_id', 'guard_id')
+             ->orderByDesc('last_worked_date')
+@@ -54,6 +55,7 @@ public function show(SecurityGuard $guard, Event $event)
+         $shifts = EventShift::query()
+             ->where('event_id', $event->id)
+             ->where('guard_id', $guard->id)
++            ->whereNull('cancelled_at')
+             ->orderBy('date')
+             ->orderBy('shift_no')
+             ->get();
+diff --git a/app/Models/EventShift.php b/app/Models/EventShift.php
+index a8b38fe..4680c23 100644
+--- a/app/Models/EventShift.php
++++ b/app/Models/EventShift.php
+@@ -24,13 +24,24 @@ class EventShift extends Model
+         'site_name',
+         'site_address',
+         'shift_no',
++        'cancelled_at',
+     ];
+ 
+     protected $casts = [
+         'date' => 'date',
+         'break_hours' => 'decimal:2',
++        'cancelled_at' => 'datetime',
+     ];
+ 
++    /**
++     * Only non-cancelled shifts. Cancelled shifts are omitted from all
++     * billing, pay sheets, timesheets and reports (they count as zero).
++     */
++    public function scopeActive($query)
++    {
++        return $query->whereNull('cancelled_at');
++    }
++
+     /**
+      * Each shift belongs to an event
+      */
+diff --git a/app/Services/GuardInvoices/GenerateDraftGuardInvoiceForEventGuard.php b/app/Services/GuardInvoices/GenerateDraftGuardInvoiceForEventGuard.php
+index 407b56c..1314694 100644
+--- a/app/Services/GuardInvoices/GenerateDraftGuardInvoiceForEventGuard.php
++++ b/app/Services/GuardInvoices/GenerateDraftGuardInvoiceForEventGuard.php
+@@ -50,6 +50,7 @@ public function handle(Event $event, int $guardId): GuardInvoice
+             $shifts = EventShift::query()
+                 ->where('event_id', $event->id)
+                 ->where('guard_id', $guardId)
++                ->whereNull('cancelled_at')
+                 ->whereNotNull('date')
+                 ->whereNotNull('start_time')
+                 ->whereNotNull('end_time')
+diff --git a/app/Services/GuardInvoices/GenerateDraftGuardInvoicesForEvent.php b/app/Services/GuardInvoices/GenerateDraftGuardInvoicesForEvent.php
+index 5fb0ec5..8512863 100644
+--- a/app/Services/GuardInvoices/GenerateDraftGuardInvoicesForEvent.php
++++ b/app/Services/GuardInvoices/GenerateDraftGuardInvoicesForEvent.php
+@@ -19,6 +19,7 @@ public function handle(Event $event): array
+ 
+             $guardIds = EventShift::query()
+                 ->where('event_id', $event->id)
++                ->whereNull('cancelled_at')
+                 ->whereNotNull('guard_id')
+                 ->distinct()
+                 ->pluck('guard_id')
+diff --git a/app/Services/Invoices/GenerateDraftInvoiceForEvent.php b/app/Services/Invoices/GenerateDraftInvoiceForEvent.php
+index 8aa642d..f96ee4e 100644
+--- a/app/Services/Invoices/GenerateDraftInvoiceForEvent.php
++++ b/app/Services/Invoices/GenerateDraftInvoiceForEvent.php
+@@ -92,6 +92,7 @@ public function handle(Event $event): Invoice
+ 
+             $shifts = EventShift::query()
+                 ->where('event_id', $event->id)
++                ->whereNull('cancelled_at')
+                 ->whereNotNull('date')
+                 ->whereNotNull('start_time')
+                 ->whereNotNull('end_time')

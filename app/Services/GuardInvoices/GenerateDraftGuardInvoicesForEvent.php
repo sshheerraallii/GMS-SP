@@ -19,6 +19,7 @@ class GenerateDraftGuardInvoicesForEvent
 
             $guardIds = EventShift::query()
                 ->where('event_id', $event->id)
+                ->whereNull('cancelled_at')
                 ->whereNotNull('guard_id')
                 ->distinct()
                 ->pluck('guard_id')

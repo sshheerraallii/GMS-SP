@@ -73,7 +73,9 @@
                     <th class="border p-2 text-left">Address</th>
                     <th class="border p-2 text-left">Client</th>
                     <th class="border p-2 text-center">Type</th>
+                    @can('view-charge-rate')
                     <th class="border p-2 text-center">Charge</th>
+                    @endcan
                     <th class="border p-2 text-center">Invoice Date</th>
                     <th class="border p-2 text-center">Pay Rate</th>
                     <th class="border p-2 text-center">Hours</th>
@@ -103,7 +105,12 @@
                         </td>
 
                         <td class="border p-2">
-                            {{ $event->client->name ?? '-' }}
+                            <div class="flex items-center gap-2">
+                                @if($event->client?->color)
+                                    <span class="inline-block h-3 w-3 shrink-0 rounded-full" style="background: {{ $event->client->color }};"></span>
+                                @endif
+                                <span>{{ $event->client->name ?? '-' }}</span>
+                            </div>
                         </td>
 
                         <td class="border p-2 text-center">
@@ -112,9 +119,11 @@
                             </span>
                         </td>
 
+                        @can('view-charge-rate')
                         <td class="border p-2 text-center">
-                            {{ $event->charge_rate }}/hr
+                            {{ $event->charge_rate !== null ? $event->charge_rate.'/hr' : 'Not set' }}
                         </td>
+                        @endcan
 
                         <td class="border p-2 text-center">
                             {{ $event->invoice_date }}
@@ -188,7 +197,7 @@
                     </tr>
                 @empty
                     <tr>
-                        <td colspan="11" class="text-center p-4 text-gray-500">
+                        <td colspan="{{ auth()->user()->can('view-charge-rate') ? 11 : 10 }}" class="text-center p-4 text-gray-500">
                             No events found.
                         </td>
                     </tr>

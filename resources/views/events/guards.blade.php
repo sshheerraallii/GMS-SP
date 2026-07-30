@@ -144,12 +144,28 @@
 
                                         <div class="md:col-span-2">
                                             <label class="block text-xs font-medium mb-1 text-gray-600">Shift Location</label>
-                                         <input type="text"
-       class="w-full border rounded px-2 py-1"
-       x-model="assignedGuards[date][i-1].shift1Location"
-       @blur="queueSaveRow(date, i-1)"
-       placeholder="Optional shift location"
-       :disabled="!canAssign">
+                                            <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
+                                                <input type="text"
+                                                       class="w-full border rounded px-2 py-1"
+                                                       x-model="assignedGuards[date][i-1].shift1Postcode"
+                                                       @blur="queueSaveRow(date, i-1)"
+                                                       placeholder="Postcode *"
+                                                       :required="!!assignedGuards[date][i-1].id"
+                                                       :disabled="!canAssign">
+                                                <input type="text"
+                                                       class="w-full border rounded px-2 py-1"
+                                                       x-model="assignedGuards[date][i-1].shift1SiteName"
+                                                       @blur="queueSaveRow(date, i-1)"
+                                                       placeholder="Site name *"
+                                                       :required="!!assignedGuards[date][i-1].id"
+                                                       :disabled="!canAssign">
+                                                <input type="text"
+                                                       class="w-full border rounded px-2 py-1"
+                                                       x-model="assignedGuards[date][i-1].shift1SiteAddress"
+                                                       @blur="queueSaveRow(date, i-1)"
+                                                       placeholder="Site address (optional)"
+                                                       :disabled="!canAssign">
+                                            </div>
                                         </div>
                                     </div>
                                     
@@ -212,12 +228,28 @@
                                             
                                         </div>
 
-                                        <input type="text"
-       class="w-full border rounded px-2 py-1"
-       x-model="assignedGuards[date][i-1].shift1Location"
-       @blur="queueSaveRow(date, i-1)"
-       placeholder="Optional shift 1 location"
-       :disabled="!canAssign">
+                                        <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
+                                            <input type="text"
+                                                   class="w-full border rounded px-2 py-1"
+                                                   x-model="assignedGuards[date][i-1].shift1Postcode"
+                                                   @blur="queueSaveRow(date, i-1)"
+                                                   placeholder="Postcode *"
+                                                   :required="!!assignedGuards[date][i-1].id"
+                                                   :disabled="!canAssign">
+                                            <input type="text"
+                                                   class="w-full border rounded px-2 py-1"
+                                                   x-model="assignedGuards[date][i-1].shift1SiteName"
+                                                   @blur="queueSaveRow(date, i-1)"
+                                                   placeholder="Site name *"
+                                                   :required="!!assignedGuards[date][i-1].id"
+                                                   :disabled="!canAssign">
+                                            <input type="text"
+                                                   class="w-full border rounded px-2 py-1"
+                                                   x-model="assignedGuards[date][i-1].shift1SiteAddress"
+                                                   @blur="queueSaveRow(date, i-1)"
+                                                   placeholder="Site address (optional)"
+                                                   :disabled="!canAssign">
+                                        </div>
                                     </div>
                                     
                                      {{-- Per shift save button--}}
@@ -441,6 +473,8 @@
 
 </div>
 
+@include('events.partials.import-additional-days')
+
 <script>
 function guardAssignment(dailyGuards, guards, shiftMode, existingAssignments, canAssign) {
     let assigned = {};
@@ -452,7 +486,9 @@ function guardAssignment(dailyGuards, guards, shiftMode, existingAssignments, ca
             shift1Start: '',
             shift1End: '',
             breakHours: '0',
-            shift1Location: ''
+            shift1Postcode: '',
+            shift1SiteName: '',
+            shift1SiteAddress: ''
         }));
     }
 
@@ -472,7 +508,9 @@ function guardAssignment(dailyGuards, guards, shiftMode, existingAssignments, ca
                 breakHours: row.break_hours !== null && row.break_hours !== undefined && row.break_hours !== ''
                     ? String(parseFloat(row.break_hours))
                     : '0',
-                shift1Location: row.shift1_location || '',
+                shift1Postcode: row.shift1_postcode || '',
+                shift1SiteName: row.shift1_site_name || '',
+                shift1SiteAddress: row.shift1_site_address || '',
             };
         });
     }
@@ -547,7 +585,9 @@ autosaveTimers: {},
 
                     row.shift1Start = row.shift1Start ? String(row.shift1Start).slice(0, 5) : '';
                     row.shift1End = row.shift1End ? String(row.shift1End).slice(0, 5) : '';
-                    row.shift1Location = row.shift1Location ?? '';
+                    row.shift1Postcode = row.shift1Postcode ?? '';
+                    row.shift1SiteName = row.shift1SiteName ?? '';
+                    row.shift1SiteAddress = row.shift1SiteAddress ?? '';
                 }
             }
 
@@ -706,7 +746,9 @@ autosaveTimers: {},
                 if (this.shiftMode === 'same') {
                     rows[rowIndex].shift1Start = this.globalShiftStart;
                     rows[rowIndex].shift1End = this.globalShiftEnd;
-                    rows[rowIndex].shift1Location = rows[rowIndex].shift1Location || '';
+                    rows[rowIndex].shift1Postcode = rows[rowIndex].shift1Postcode || '';
+                    rows[rowIndex].shift1SiteName = rows[rowIndex].shift1SiteName || '';
+                    rows[rowIndex].shift1SiteAddress = rows[rowIndex].shift1SiteAddress || '';
                     rows[rowIndex].breakHours = rows[rowIndex].breakHours || '0';
                 } else {
                     if (!rows[rowIndex].shift1Start && this.latest.shift1Start) {
@@ -903,7 +945,9 @@ saveRow(date, index) {
         shift1_start: norm(row.shift1Start),
         shift1_end: norm(row.shift1End),
         break_hours: normBreak(row.breakHours),
-        shift1_location: row.shift1Location ? String(row.shift1Location).trim() : null,
+        shift1_postcode: row.shift1Postcode ? String(row.shift1Postcode).trim() : null,
+        shift1_site_name: row.shift1SiteName ? String(row.shift1SiteName).trim() : null,
+        shift1_site_address: row.shift1SiteAddress ? String(row.shift1SiteAddress).trim() : null,
     };
 
     return fetch('{{ route('events.saveGuardSlot', $event->id) }}', {
@@ -969,7 +1013,9 @@ saveRow(date, index) {
                     shift1_start: norm(g.shift1Start),
                     shift1_end: norm(g.shift1End),
                     break_hours: normBreak(g.breakHours),
-                    shift1_location: g.shift1Location ? String(g.shift1Location).trim() : null,
+                    shift1_postcode: g.shift1Postcode ? String(g.shift1Postcode).trim() : null,
+                    shift1_site_name: g.shift1SiteName ? String(g.shift1SiteName).trim() : null,
+                    shift1_site_address: g.shift1SiteAddress ? String(g.shift1SiteAddress).trim() : null,
                 }));
             }
 

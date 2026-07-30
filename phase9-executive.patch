@@ -1,0 +1,99 @@
+diff --git a/app/Models/Event.php b/app/Models/Event.php
+index d6b71a5..7f06335 100644
+--- a/app/Models/Event.php
++++ b/app/Models/Event.php
+@@ -80,6 +80,11 @@ public function shifts()
+         return $this->hasMany(\App\Models\EventShift::class);
+     }
+ 
++    public function expenses()
++    {
++        return $this->hasMany(\App\Models\EventExpense::class);
++    }
++
+     public function guards()
+     {
+         return $this->belongsToMany(
+diff --git a/app/Providers/AuthServiceProvider.php b/app/Providers/AuthServiceProvider.php
+index 676729f..4de5b75 100644
+--- a/app/Providers/AuthServiceProvider.php
++++ b/app/Providers/AuthServiceProvider.php
+@@ -86,6 +86,17 @@ public function boot(): void
+             return $user->hasRole('Accountant');
+         });
+ 
++        /**
++         * ---------------------------------------------------------
++         * EXECUTIVE HOMEPAGE
++         * ---------------------------------------------------------
++         * Super Admin only (passes via the bypass above; all other
++         * roles are denied).
++         */
++        Gate::define('view-executive', function ($user) {
++            return false;
++        });
++
+         /**
+          * ---------------------------------------------------------
+          * FUTURE EXTENSIONS (placeholders)
+diff --git a/resources/views/layouts/default.blade.php b/resources/views/layouts/default.blade.php
+index 326fa65..d7e75cb 100644
+--- a/resources/views/layouts/default.blade.php
++++ b/resources/views/layouts/default.blade.php
+@@ -93,6 +93,13 @@ class="{{ $navBase }} {{ request()->routeIs('chaseup.*') ? $active : $idle }}">
+ 
+ 
+ 
++                @can('view-executive')
++                    <a href="{{ route('executive.index') }}"
++                       class="{{ $navBase }} {{ request()->routeIs('executive.*') ? $active : $idle }}">
++                        Executive
++                    </a>
++                @endcan
++
+                 @can('users.manage')
+                     <a href="{{ route('users.index') }}"
+                        class="{{ $navBase }} {{ request()->routeIs('users.*') ? $active : $idle }}">
+@@ -176,6 +183,13 @@ class="{{ $mBase }} {{ request()->routeIs('chaseup.*') ? $mActive : $mIdle }}">
+ </a>
+ 
+ 
++                @can('view-executive')
++                    <a href="{{ route('executive.index') }}"
++                       class="{{ $mBase }} {{ request()->routeIs('executive.*') ? $mActive : $mIdle }}">
++                        Executive
++                    </a>
++                @endcan
++
+                 @can('users.manage')
+                     <a href="{{ route('users.index') }}"
+                        class="{{ $mBase }} {{ request()->routeIs('users.*') ? $mActive : $mIdle }}">
+diff --git a/routes/web.php b/routes/web.php
+index e272ae7..40b605a 100644
+--- a/routes/web.php
++++ b/routes/web.php
+@@ -370,6 +370,24 @@
+     | ChaseUp
+     |--------------------------------------------------------------------------
+     */
++    /*
++    |--------------------------------------------------------------------------
++    | Executive homepage (Super Admin only)
++    |--------------------------------------------------------------------------
++    */
++    Route::middleware('can:view-executive')
++        ->prefix('executive')
++        ->name('executive.')
++        ->group(function () {
++            Route::get('/', [\App\Http\Controllers\ExecutiveController::class, 'index'])->name('index');
++            Route::post('/events/{event}/charge-rate', [\App\Http\Controllers\ExecutiveController::class, 'setChargeRate'])
++                ->whereNumber('event')->name('chargeRate');
++            Route::post('/events/{event}/expenses', [\App\Http\Controllers\ExecutiveController::class, 'storeExpense'])
++                ->whereNumber('event')->name('expenses.store');
++            Route::delete('/expenses/{eventExpense}', [\App\Http\Controllers\ExecutiveController::class, 'deleteExpense'])
++                ->whereNumber('eventExpense')->name('expenses.destroy');
++        });
++
+     Route::prefix('chaseup')->name('chaseup.')->group(function () {
+         Route::get('/', [ChaseupController::class, 'index'])->name('index');
+         Route::get('/reminders', [ChaseupController::class, 'reminders'])->name('reminders');

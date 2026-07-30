@@ -54,11 +54,21 @@
                                class="inline-flex items-center justify-center rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition duration-150 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-300">
                                 Download Staff Payment Sheet
                             </a>
+
+                            <a href="{{ route('events.staffPaymentSheetReduced', $event->id) }}"
+                               class="inline-flex items-center justify-center rounded-lg border border-blue-600 bg-white px-4 py-2.5 text-sm font-semibold text-blue-700 shadow-sm transition duration-150 hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-300">
+                                Payment Sheet (No Bank Details)
+                            </a>
                             
                             
                             <a href="{{ route('events.timeSheet', $event->id) }}"
    class="inline-flex items-center justify-center rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition duration-150 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-300">
     Download Time Sheet
+</a>
+
+                            <a href="{{ route('events.timeSheetReduced', $event->id) }}"
+   class="inline-flex items-center justify-center rounded-lg border border-blue-600 bg-white px-4 py-2.5 text-sm font-semibold text-blue-700 shadow-sm transition duration-150 hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-300">
+    Time Sheet (No Personal Details)
 </a>
                             
                             
@@ -148,12 +158,14 @@
                 <div class="font-medium text-gray-900">{{ $event->client_contact ?? '-' }}</div>
             </div>
 
+            @can('view-charge-rate')
             <div class="bg-gray-50 border rounded p-3">
                 <div class="text-gray-500">Charge Rate</div>
                 <div class="font-medium text-gray-900">
-                    {{ $event->charge_rate !== null ? $event->charge_rate . ' /hr' : '-' }}
+                    {{ $event->charge_rate !== null ? $event->charge_rate . ' /hr' : 'Not set' }}
                 </div>
             </div>
+            @endcan
 
             <div class="bg-gray-50 border rounded p-3">
                 <div class="text-gray-500">Pay Rate</div>
@@ -331,7 +343,7 @@
                                         </thead>
                                         <tbody>
                                             @foreach($rows as $row)
-                                                <tr class="{{ $row['is_red'] ? 'bg-red-50 hover:bg-red-50' : 'hover:bg-gray-50' }}">
+                                                <tr class="{{ $row['is_cancelled'] ? 'bg-red-100 hover:bg-red-100' : ($row['is_red'] ? 'bg-red-50 hover:bg-red-50' : 'hover:bg-gray-50') }}">
                                                     <td class="border-b px-3 py-2">{{ $row['slot_no'] }}</td>
                                                     <td class="border-b px-3 py-2">{{ $row['guard'] }}</td>
                                                     <td class="border-b px-3 py-2">{{ $row['license'] }}</td>
@@ -342,7 +354,11 @@
                                                     
                                                     
                                                     <td class="border-b px-3 py-2">
-                                                        @if($row['is_red'])
+                                                        @if($row['is_cancelled'])
+                                                            <span class="inline-flex items-center rounded-full bg-red-200 px-2 py-1 text-[11px] font-semibold text-red-800">
+                                                                Cancelled
+                                                            </span>
+                                                        @elseif($row['is_red'])
                                                             <div class="flex flex-wrap gap-1">
                                                                 @foreach($row['issues'] as $issue)
                                                                     <span class="inline-flex items-center rounded-full bg-red-100 px-2 py-1 text-[11px] font-medium text-red-700">
@@ -359,15 +375,28 @@
                                                     
                                                     <td class="border-b px-3 py-2 text-right">
     @can('shifts.assign')
-        @if($row['is_red'])
-            <button type="button"
-                    class="inline-flex items-center justify-center rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-blue-700"
-                    @click='openEditor(@json($row))'>
-                Edit
-            </button>
-        @else
-            <span class="text-xs text-gray-400">—</span>
-        @endif
+        <div class="flex items-center justify-end gap-2">
+            @if($row['guard_id'])
+                <form method="POST" action="{{ route('events.toggleCancelShift', $event->id) }}" class="inline-block">
+                    @csrf
+                    <input type="hidden" name="date" value="{{ $row['date'] }}">
+                    <input type="hidden" name="guard_id" value="{{ $row['guard_id'] }}">
+                    <button type="submit"
+                            class="inline-flex items-center justify-center rounded-md px-3 py-2 text-sm font-semibold text-white shadow {{ $row['is_cancelled'] ? 'bg-gray-600 hover:bg-gray-700' : 'bg-red-600 hover:bg-red-700' }}">
+                        {{ $row['is_cancelled'] ? 'Un-cancel' : 'Cancel' }}
+                    </button>
+                </form>
+            @endif
+            @if($row['is_red'])
+                <button type="button"
+                        class="inline-flex items-center justify-center rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-blue-700"
+                        @click='openEditor(@json($row))'>
+                    Edit
+                </button>
+            @elseif(!$row['guard_id'])
+                <span class="text-xs text-gray-400">—</span>
+            @endif
+        </div>
     @endcan
 </td>
                                                     

@@ -78,6 +78,27 @@ class AuthServiceProvider extends ServiceProvider
 
         /**
          * ---------------------------------------------------------
+         * GUARD STATEMENT (PAYROLL PDF)
+         * ---------------------------------------------------------
+         * Super Admin (via bypass) + Accountant only. Admin excluded.
+         */
+        Gate::define('view-guard-statement', function ($user) {
+            return $user->hasRole('Accountant');
+        });
+
+        /**
+         * ---------------------------------------------------------
+         * EXECUTIVE HOMEPAGE
+         * ---------------------------------------------------------
+         * Super Admin only (passes via the bypass above; all other
+         * roles are denied).
+         */
+        Gate::define('view-executive', function ($user) {
+            return false;
+        });
+
+        /**
+         * ---------------------------------------------------------
          * FUTURE EXTENSIONS (placeholders)
          * ---------------------------------------------------------
          * Examples:
