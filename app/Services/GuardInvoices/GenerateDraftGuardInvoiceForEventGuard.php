@@ -16,7 +16,7 @@ class GenerateDraftGuardInvoiceForEventGuard
     {
         return DB::transaction(function () use ($event, $guardId) {
 
-            SecurityGuard::findOrFail($guardId);
+            $guard = SecurityGuard::findOrFail($guardId);
 
             $invoice = GuardInvoice::query()
                 ->where('event_id', $event->id)
@@ -28,7 +28,13 @@ class GenerateDraftGuardInvoiceForEventGuard
                 return $invoice->load('lines');
             }
 
-            $rate = (float) ($event->pay_rate ?? 0);
+            /*
+             * V3-P3: pay rate resolves from the guard's category
+             * (SIA / Steward), falling back to the event's base pay_rate
+             * when no category rate is set. One guard = one category, so
+             * pay_rate_snapshot stays a single value.
+             */
+            $rate = $event->rateForGuard($guard, 'pay');
 
             if (!$invoice) {
                 $invoice = GuardInvoice::create([

@@ -6,6 +6,7 @@ use App\Models\Event;
 use App\Models\EventShift;
 use App\Models\Invoice;
 use App\Models\InvoiceLine;
+use App\Models\SecurityGuard;
 use App\Models\Supplier;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -131,16 +132,37 @@ class GenerateDraftInvoiceForEvent
              * internal grouping key to keep line math correct if break values ever differ.
              * Visually, the line still remains same date/start/end structure.
              */
+            /*
+             * V3-P3: guard categories drive the charge rate. Fetched once
+             * for every guard on the event rather than per shift.
+             */
+            $guardCategories = SecurityGuard::query()
+                ->whereIn('id', $shifts->pluck('guard_id')->filter()->unique()->all())
+                ->pluck('category', 'id');
+
             $groups = [];
 
             foreach ($shifts as $s) {
                 $breakHours = round((float) ($s->break_hours ?? 0), 2);
+
+                /*
+                 * V3-P3: the grouping key carries the RESOLVED rate, not the
+                 * guard's category. Guards whose rate resolves to the same
+                 * number stay on one line, so an event with no category rates
+                 * set produces byte-identical output to pre-V3. A slot only
+                 * splits into multiple lines when the rates genuinely differ.
+                 */
+                $lineRate = round(
+                    $event->rateFor($guardCategories[$s->guard_id] ?? null, 'charge'),
+                    2
+                );
 
                 $key = implode('|', [
                     (string) $s->date,
                     (string) $s->start_time,
                     (string) $s->end_time,
                     number_format($breakHours, 2, '.', ''),
+                    number_format($lineRate, 2, '.', ''),
                 ]);
 
                 $groups[$key] ??= [
@@ -148,13 +170,18 @@ class GenerateDraftInvoiceForEvent
                     'start'       => (string) $s->start_time,
                     'end'         => (string) $s->end_time,
                     'break_hours' => $breakHours,
+                    'rate'        => $lineRate,
                     'guards'      => [],
                 ];
 
                 $groups[$key]['guards'][(string) $s->guard_id] = true;
             }
 
-            uasort($groups, fn ($a, $b) => strcmp($a['date'] . $a['start'], $b['date'] . $b['start']));
+            // Rate appended to the sort key so split lines order deterministically.
+            uasort($groups, fn ($a, $b) => strcmp(
+                $a['date'] . $a['start'] . number_format($a['rate'], 2, '.', ''),
+                $b['date'] . $b['start'] . number_format($b['rate'], 2, '.', '')
+            ));
 
             $lineNo     = 1;
             $subtotal   = 0.0;
@@ -169,7 +196,8 @@ class GenerateDraftInvoiceForEvent
                     (float) ($g['break_hours'] ?? 0)
                 );
 
-                $amount = round($qty * $hoursPerGuard * $chargeRate, 2);
+                $lineRate = (float) $g['rate'];
+                $amount   = round($qty * $hoursPerGuard * $lineRate, 2);
 
                 $subtotal   += $amount;
                 $totalHours += ($qty * $hoursPerGuard);
@@ -183,7 +211,7 @@ class GenerateDraftInvoiceForEvent
                     'shift_end'    => $g['end'],
                     'quantity'     => $qty,
                     'hours'        => round($hoursPerGuard, 2),
-                    'rate'         => round($chargeRate, 2),
+                    'rate'         => round($lineRate, 2),
                     'amount'       => $amount,
                 ]);
             }
