@@ -75,7 +75,7 @@ class GenerateDraftGuardInvoiceForEventGuard
                     'guard_invoice_id' => $invoice->id,
                     'line_no'          => $lineNo++,
                     'service_date'     => $shift->date,
-                    'description'      => 'Guard Services',
+                    'description'      => $this->lineDescription($shift),
                     'shift_start'      => $shift->start_time,
                     'shift_end'        => $shift->end_time,
                     'hours'            => round($hours, 2),
@@ -95,6 +95,20 @@ class GenerateDraftGuardInvoiceForEventGuard
 
             return $invoice->load('lines');
         });
+    }
+
+    /**
+     * V3-P2: the line description is the shift's composed site location
+     * (Site Name, Postcode, Site Address). Falls back to the previous
+     * generic label when a shift carries no location at all — legacy
+     * events and any slot saved without the three site fields.
+     * The field remains hand-editable on the draft edit screen.
+     */
+    private function lineDescription(EventShift $shift): string
+    {
+        $location = trim((string) ($shift->location ?? ''));
+
+        return $location !== '' ? $location : 'Guard Services';
     }
 
     private function computeNetHours(string $start, string $end, float $breakHours = 0): float
