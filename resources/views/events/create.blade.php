@@ -165,6 +165,49 @@
                    class="w-full border rounded px-3 py-2">
         </div>
 
+        {{-- CATEGORY RATES (V3-P3) — optional per-category overrides.
+             Leave blank to use the base rates above. --}}
+        <div x-data="{ open: {{ (old('pay_rate_sia') !== null || old('pay_rate_steward') !== null || old('charge_rate_sia') !== null || old('charge_rate_steward') !== null) ? 'true' : 'false' }} }">
+            <button type="button" @click="open = !open"
+                    class="flex items-center gap-1 text-sm font-medium text-gray-600 hover:text-gray-900">
+                <span x-text="open ? '−' : '+'"></span>
+                Category rates (SIA / Steward) &mdash; optional
+            </button>
+            <p class="mt-1 text-xs text-gray-400">
+                Set these only when SIA and Steward are paid or charged differently.
+                Anything left blank falls back to the rates above.
+            </p>
+
+            <div x-show="open" x-cloak class="mt-3 grid grid-cols-1 gap-4 rounded border border-gray-200 bg-gray-50 p-3 sm:grid-cols-2">
+                <div>
+                    <label class="block font-medium mb-1">Pay Rate / Hour &mdash; SIA</label>
+                    <input type="number" step="0.01" min="0" name="pay_rate_sia"
+                           value="{{ old('pay_rate_sia') }}" placeholder="Uses base pay rate"
+                           class="w-full border rounded px-3 py-2">
+                </div>
+                <div>
+                    <label class="block font-medium mb-1">Pay Rate / Hour &mdash; Steward</label>
+                    <input type="number" step="0.01" min="0" name="pay_rate_steward"
+                           value="{{ old('pay_rate_steward') }}" placeholder="Uses base pay rate"
+                           class="w-full border rounded px-3 py-2">
+                </div>
+                @can('view-charge-rate')
+                <div>
+                    <label class="block font-medium mb-1">Charge Rate / Hour &mdash; SIA</label>
+                    <input type="number" step="0.01" min="0" name="charge_rate_sia"
+                           value="{{ old('charge_rate_sia') }}" placeholder="Uses base charge rate"
+                           class="w-full border rounded px-3 py-2">
+                </div>
+                <div>
+                    <label class="block font-medium mb-1">Charge Rate / Hour &mdash; Steward</label>
+                    <input type="number" step="0.01" min="0" name="charge_rate_steward"
+                           value="{{ old('charge_rate_steward') }}" placeholder="Uses base charge rate"
+                           class="w-full border rounded px-3 py-2">
+                </div>
+                @endcan
+            </div>
+        </div>
+
         {{-- CLIENT CONTACT --}}
         <div>
             <label class="block font-medium mb-1">Client Contact</label>

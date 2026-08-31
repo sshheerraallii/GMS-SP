@@ -144,8 +144,12 @@ class EventController extends Controller
             'start_date'      => 'nullable|date',
             'end_date'        => 'nullable|date|after_or_equal:start_date',
             'charge_rate'     => 'nullable|numeric',
+            'charge_rate_sia'     => 'nullable|numeric|min:0',
+            'charge_rate_steward' => 'nullable|numeric|min:0',
             'invoice_date'    => 'nullable|date',
             'pay_rate'        => 'nullable|numeric',
+            'pay_rate_sia'     => 'nullable|numeric|min:0',
+            'pay_rate_steward' => 'nullable|numeric|min:0',
             'client_contact'  => 'nullable|string|max:100',
             'instructions'    => 'nullable|string',
             'shift_mode'      => 'required|in:same,different',
@@ -221,8 +225,12 @@ class EventController extends Controller
                 'start_date'      => $startDate,
                 'end_date'        => $endDate,
                 'charge_rate'     => $validated['charge_rate'] ?? null,
+                'charge_rate_sia'     => $validated['charge_rate_sia'] ?? null,
+                'charge_rate_steward' => $validated['charge_rate_steward'] ?? null,
                 'invoice_date'    => $validated['invoice_date'] ?? null,
                 'pay_rate'        => $validated['pay_rate'] ?? null,
+                'pay_rate_sia'     => $validated['pay_rate_sia'] ?? null,
+                'pay_rate_steward' => $validated['pay_rate_steward'] ?? null,
                 'client_contact'  => $validated['client_contact'] ?? null,
                 'instructions'    => $validated['instructions'] ?? null,
                 'daily_guards'    => $dailyGuards->toArray(),
@@ -1307,8 +1315,12 @@ private function syncImportedSlotShift(Event $event, string $date, int $slotNo):
             'supplier_id'    => 'nullable|exists:suppliers,id',
             'payment_terms'  => 'nullable|string|in:weekly,biweekly,monthly,days_55,weeks_5',
             'charge_rate'    => 'nullable|numeric',
+            'charge_rate_sia'     => 'nullable|numeric|min:0',
+            'charge_rate_steward' => 'nullable|numeric|min:0',
             'invoice_date'   => 'nullable|date',
             'pay_rate'       => 'nullable|numeric',
+            'pay_rate_sia'     => 'nullable|numeric|min:0',
+            'pay_rate_steward' => 'nullable|numeric|min:0',
             'client_contact' => 'nullable|string|max:100',
             'instructions'   => 'nullable|string',
             'start_date'     => 'required|date',
@@ -1331,8 +1343,19 @@ private function syncImportedSlotShift(Event $event, string $date, int $slotNo):
                 'charge_rate'    => auth()->user()->can('view-charge-rate')
                     ? ($validated['charge_rate'] ?? null)
                     : $event->charge_rate,
+                // V3-P3: category charge rates are gated exactly like the
+                // base charge rate, so a user who cannot see them cannot
+                // blank them by saving the form.
+                'charge_rate_sia' => auth()->user()->can('view-charge-rate')
+                    ? ($validated['charge_rate_sia'] ?? null)
+                    : $event->charge_rate_sia,
+                'charge_rate_steward' => auth()->user()->can('view-charge-rate')
+                    ? ($validated['charge_rate_steward'] ?? null)
+                    : $event->charge_rate_steward,
                 'invoice_date'   => $validated['invoice_date'] ?? null,
                 'pay_rate'       => $validated['pay_rate'] ?? null,
+                'pay_rate_sia'     => $validated['pay_rate_sia'] ?? null,
+                'pay_rate_steward' => $validated['pay_rate_steward'] ?? null,
                 'client_contact' => $validated['client_contact'] ?? null,
                 'instructions'   => $validated['instructions'] ?? null,
                 'start_date'     => $validated['start_date'],
