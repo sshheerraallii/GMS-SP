@@ -61,18 +61,17 @@ class RolesAndPermissionsSeeder extends Seeder
             Permission::where('name', '!=', 'users.manage')->get()
         );
 
-        // Accountant — full invoicing/reports (charge-rate via the
-        // view-charge-rate gate), create/edit clients & events, full
-        // guard VIEW only. No user management, no deletes, no shift
-        // assignment.
+        // Accountant — V3-P1: now carries Admin's FULL permission set
+        // (everything except user management) in addition to its own
+        // accountant-only gates (view-charge-rate, view-guard-statement),
+        // which live in AuthServiceProvider and are unchanged.
+        // Deliberately identical to Admin above; the two roles are
+        // separated by gates, not by permissions. Admin remains blind
+        // to charge rate; Executive stays Super Admin only.
         $accountant = Role::firstOrCreate(['name' => 'Accountant']);
-        $accountant->syncPermissions([
-            'clients.view', 'clients.create', 'clients.edit',
-            'events.view', 'events.create', 'events.edit',
-            'guards.view',
-            'reports.view',
-            'invoices.view', 'invoices.create', 'invoices.edit',
-        ]);
+        $accountant->syncPermissions(
+            Permission::where('name', '!=', 'users.manage')->get()
+        );
 
         // Moderator — guards VIEW ONLY + events (no delete) + shift
         // assignment. No guard create/edit (guard personal details are
