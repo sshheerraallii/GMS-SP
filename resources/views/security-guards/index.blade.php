@@ -1,7 +1,7 @@
 @extends('layouts.default')
 
 @section('content')
-<div class="max-w-7xl mx-auto px-6 py-10">
+<div class="max-w-7xl mx-auto px-6 py-10" x-data="guardsIndexColumns()">
 
     {{-- Header --}}
     <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-6">
@@ -27,27 +27,115 @@
         </div>
     @endif
 
+    @can('view-guard-details')
     {{-- Controls --}}
     <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-3">
-        <form method="GET" class="flex items-center gap-2">
-            <label class="text-sm text-gray-600">Show</label>
 
-            <select name="per_page"
-                    onchange="this.form.submit()"
-                    class="border rounded px-2 py-2 text-sm bg-white">
-                @foreach([10,20,30,40,50] as $size)
-                    <option value="{{ $size }}" {{ request('per_page', 20) == $size ? 'selected' : '' }}>
-                        {{ $size }}
-                    </option>
-                @endforeach
+        {{-- Left: per-page + column toggles --}}
+        <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-3">
+            <form method="GET" class="flex items-center gap-2">
+                <input type="hidden" name="q" value="{{ request('q') }}">
+                <input type="hidden" name="by" value="{{ request('by', 'all') }}">
+
+                <label class="text-sm text-gray-600">Show</label>
+
+                <select name="per_page"
+                        onchange="this.form.submit()"
+                        class="border rounded px-2 py-2 text-sm bg-white">
+                    @foreach([10,20,30,40,50] as $size)
+                        <option value="{{ $size }}" {{ request('per_page', 20) == $size ? 'selected' : '' }}>
+                            {{ $size }}
+                        </option>
+                    @endforeach
+                </select>
+
+                <span class="text-sm text-gray-600">per page</span>
+            </form>
+
+            {{-- Column toggle --}}
+            <div class="relative" @click.away="open = false">
+                <button type="button"
+                        @click="open = !open"
+                        class="inline-flex items-center gap-2 rounded border bg-white px-3 py-2 text-sm text-gray-700 hover:bg-gray-50">
+                    Columns
+                    <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                        <path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.51a.75.75 0 01-1.08 0l-4.25-4.51a.75.75 0 01.02-1.06z" clip-rule="evenodd" />
+                    </svg>
+                </button>
+
+                <div x-show="open"
+                     x-transition
+                     class="absolute left-0 z-20 mt-2 w-72 rounded-lg border bg-white shadow-lg p-3"
+                     style="display: none;">
+                    <div class="mb-2 text-sm font-semibold text-gray-800">Visible columns</div>
+                    <div class="space-y-2 max-h-80 overflow-auto">
+
+                        <label class="flex items-center justify-between gap-3 text-sm">
+                            <span>Name</span>
+                            <input type="checkbox"
+                                   checked
+                                   disabled
+                                   class="rounded border-gray-300 text-emerald-600 cursor-not-allowed opacity-60">
+                        </label>
+
+                        <template x-for="col in toggleableColumns" :key="col.key">
+                            <label class="flex items-center justify-between gap-3 text-sm">
+                                <span x-text="col.label"></span>
+                                <input type="checkbox"
+                                       class="rounded border-gray-300 text-emerald-600"
+                                       :checked="isVisible(col.key)"
+                                       @change="toggleColumn(col.key)">
+                            </label>
+                        </template>
+                    </div>
+
+                    <div class="mt-3 flex gap-2">
+                        <button type="button"
+                                @click="resetDefaults()"
+                                class="rounded border px-3 py-1.5 text-xs hover:bg-gray-50">
+                            Reset default
+                        </button>
+
+                        <button type="button"
+                                @click="showAll()"
+                                class="rounded border px-3 py-1.5 text-xs hover:bg-gray-50">
+                            Show all
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        {{-- Right: search --}}
+        <form method="GET" class="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-2">
+            <input type="hidden" name="per_page" value="{{ request('per_page', 20) }}">
+
+            <select name="by" class="border rounded px-2 py-2 text-sm bg-white">
+                <option value="all" {{ request('by', 'all') === 'all' ? 'selected' : '' }}>All</option>
+                <option value="name" {{ request('by') === 'name' ? 'selected' : '' }}>Name</option>
+                <option value="license" {{ request('by') === 'license' ? 'selected' : '' }}>License #</option>
+                <option value="email" {{ request('by') === 'email' ? 'selected' : '' }}>Email</option>
             </select>
 
-            <span class="text-sm text-gray-600">per page</span>
+            <input type="text"
+                   name="q"
+                   value="{{ request('q') }}"
+                   placeholder="Search guards…"
+                   class="border rounded px-3 py-2 text-sm bg-white w-full sm:w-72" />
+
+            <button type="submit"
+                    class="px-4 py-2 rounded bg-gray-900 text-white text-sm hover:bg-black">
+                Search
+            </button>
+
+            @if(request('q'))
+                <a href="{{ route('security-guards.index', ['per_page' => request('per_page', 20)]) }}"
+                   class="px-3 py-2 rounded border text-sm hover:bg-gray-50">
+                    Clear
+                </a>
+            @endif
         </form>
 
-        <div class="text-sm text-gray-500">
-            Page {{ $securityGuards->currentPage() }} of {{ $securityGuards->lastPage() }}
-        </div>
     </div>
 
     {{-- Table --}}
@@ -59,20 +147,21 @@
 
         {{-- Actual table scroll --}}
         <div class="overflow-x-auto" id="guards-scroll-bottom">
-            <table class="min-w-[1900px] w-full text-sm text-left" id="guards-table">
+            <table class="min-w-[1000px] w-full text-sm text-left" id="guards-table">
                 <thead class="bg-gray-100 sticky top-0 z-10">
                     <tr class="text-gray-700">
+                        <th x-show="isVisible('row_no')" class="px-3 py-3 whitespace-nowrap">#</th>
                         <th class="px-3 py-3 whitespace-nowrap">Name</th>
-                        <th class="px-3 py-3 whitespace-nowrap">Email</th>
-                        <th class="px-3 py-3 whitespace-nowrap">Phone</th>
-                        <th class="px-3 py-3 whitespace-nowrap">License #</th>
-                        <th class="px-3 py-3 whitespace-nowrap">Exp</th>
-                        <th class="px-3 py-3 whitespace-nowrap">Category</th>
-                        <th class="px-3 py-3 whitespace-nowrap">Account Details</th>
-                        <th class="px-3 py-3 whitespace-nowrap">Visa</th>
-                        <th class="px-3 py-3 whitespace-nowrap">City</th>
-                        <th class="px-3 py-3 text-center whitespace-nowrap">Docs</th>
-                        <th class="px-3 py-3 text-right whitespace-nowrap">Actions</th>
+                        <th x-show="isVisible('email')" class="px-3 py-3 whitespace-nowrap">Email</th>
+                        <th x-show="isVisible('phone')" class="px-3 py-3 whitespace-nowrap">Phone</th>
+                        <th x-show="isVisible('license_number')" class="px-3 py-3 whitespace-nowrap">License #</th>
+                        <th x-show="isVisible('license_expiry')" class="px-3 py-3 whitespace-nowrap">Exp</th>
+                        <th x-show="isVisible('category')" class="px-3 py-3 whitespace-nowrap">Category</th>
+                        <th x-show="isVisible('account_details')" class="px-3 py-3 whitespace-nowrap">Account Details</th>
+                        <th x-show="isVisible('visa')" class="px-3 py-3 whitespace-nowrap">Visa</th>
+                        <th x-show="isVisible('city')" class="px-3 py-3 whitespace-nowrap">City</th>
+                        <th x-show="isVisible('docs')" class="px-3 py-3 text-center whitespace-nowrap">Docs</th>
+                        <th x-show="isVisible('actions')" class="px-3 py-3 text-right whitespace-nowrap">Actions</th>
                     </tr>
                 </thead>
 
@@ -80,54 +169,61 @@
                     @forelse($securityGuards as $guard)
                         <tr class="hover:bg-gray-50">
 
+                            <td x-show="isVisible('row_no')" class="px-3 py-3 whitespace-nowrap text-gray-600">
+                                {{ ($securityGuards->firstItem() ?? 0) + $loop->index }}
+                            </td>
+
                             <td class="px-3 py-3 font-medium whitespace-nowrap">
                                 {{ $guard->fullname }}
                             </td>
 
-                            <td class="px-3 py-3">
+                            <td x-show="isVisible('email')" class="px-3 py-3">
                                 {{ $guard->email_address }}
                             </td>
 
-                            <td class="px-3 py-3 whitespace-nowrap">
+                            <td x-show="isVisible('phone')" class="px-3 py-3 whitespace-nowrap">
                                 {{ $guard->phone_number }}
                             </td>
 
-                            <td class="px-3 py-3 whitespace-nowrap">
+                            <td x-show="isVisible('license_number')" class="px-3 py-3 whitespace-nowrap">
                                 {{ $guard->license_number }}
                             </td>
 
-                            <td class="px-3 py-3 whitespace-nowrap">
+                            <td x-show="isVisible('license_expiry')" class="px-3 py-3 whitespace-nowrap">
                                 {{ $guard->license_exp_date }}
                             </td>
 
-                            <td class="px-3 py-3 whitespace-nowrap">
+                            <td x-show="isVisible('category')" class="px-3 py-3 whitespace-nowrap">
                                 <span class="px-2 py-1 rounded bg-gray-100 text-gray-800">
                                     {{ $guard->category }}
                                 </span>
                             </td>
 
-                            {{-- Account Details --}}
-                            <td class="px-3 py-3 text-xs leading-5 whitespace-nowrap">
+                            <td x-show="isVisible('account_details')" class="px-3 py-3 text-xs leading-5 whitespace-nowrap">
                                 <div>
                                     <span class="text-gray-500">SC:</span>
                                     {{ $guard->sort_code ?? '-' }}
                                 </div>
+
                                 <div>
                                     <span class="text-gray-500">ACC:</span>
                                     {{ $guard->account_number ?? '-' }}
+                                    @if(!empty($guard->beneficiary_name))
+                                        <span class="text-gray-400">—</span>
+                                        <span class="text-gray-700">{{ $guard->beneficiary_name }}</span>
+                                    @endif
                                 </div>
                             </td>
 
-                            <td class="px-3 py-3 whitespace-nowrap">
+                            <td x-show="isVisible('visa')" class="px-3 py-3 whitespace-nowrap">
                                 {{ $guard->visa_status }}
                             </td>
 
-                            <td class="px-3 py-3 whitespace-nowrap">
+                            <td x-show="isVisible('city')" class="px-3 py-3 whitespace-nowrap">
                                 {{ $guard->city }}
                             </td>
 
-                            {{-- Docs --}}
-                            <td class="px-3 py-3 text-center">
+                            <td x-show="isVisible('docs')" class="px-3 py-3 text-center">
                                 <div class="flex justify-center flex-wrap gap-2 text-xs">
                                     @php
                                         $docs = [
@@ -154,8 +250,7 @@
                                 </div>
                             </td>
 
-                            {{-- Actions --}}
-                            <td class="px-3 py-3 text-right whitespace-nowrap">
+                            <td x-show="isVisible('actions')" class="px-3 py-3 text-right whitespace-nowrap">
                                 <div class="inline-flex gap-2">
                                     <a href="{{ route('security-guards.show', $guard->id) }}"
                                        class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded-md text-xs transition">
@@ -188,7 +283,7 @@
                         </tr>
                     @empty
                         <tr>
-                            <td colspan="11" class="px-6 py-10 text-center text-gray-500">
+                            <td colspan="12" class="px-6 py-10 text-center text-gray-500">
                                 No security guards found.
                             </td>
                         </tr>
@@ -202,11 +297,133 @@
     <div class="mt-6">
         {{ $securityGuards->links() }}
     </div>
+    @else
+    {{-- Restricted view (Moderator): Name / Address / Badge / Expiry only --}}
+    <form method="GET" class="mb-4 flex items-center gap-2">
+        <input type="text" name="q" value="{{ request('q') }}"
+               placeholder="Search by name…"
+               class="border rounded px-3 py-2 text-sm w-full sm:w-64">
+        <button type="submit"
+                class="px-4 py-2 rounded-md bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700">
+            Search
+        </button>
+        @if(request('q'))
+            <a href="{{ route('security-guards.index') }}"
+               class="px-3 py-2 rounded-md border text-sm text-gray-600 hover:bg-gray-50">Clear</a>
+        @endif
+    </form>
+
+    <div class="overflow-x-auto rounded-lg border border-gray-200">
+        <table class="min-w-full text-sm">
+            <thead class="bg-gray-100">
+                <tr>
+                    <th class="px-4 py-3 text-left font-semibold">Name</th>
+                    <th class="px-4 py-3 text-left font-semibold">Address</th>
+                    <th class="px-4 py-3 text-left font-semibold">Badge No</th>
+                    <th class="px-4 py-3 text-left font-semibold">Expiry</th>
+                    <th class="px-4 py-3 text-right font-semibold">Actions</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-100">
+                @forelse($securityGuards as $guard)
+                    <tr class="hover:bg-gray-50">
+                        <td class="px-4 py-3 font-medium whitespace-nowrap">{{ $guard->fullname }}</td>
+                        <td class="px-4 py-3">{{ $guard->adresse ?? '-' }}</td>
+                        <td class="px-4 py-3 whitespace-nowrap">{{ $guard->license_number ?? '-' }}</td>
+                        <td class="px-4 py-3 whitespace-nowrap">
+                            {{ $guard->license_exp_date ? \Carbon\Carbon::parse($guard->license_exp_date)->format('d M Y') : '-' }}
+                        </td>
+                        <td class="px-4 py-3 text-right whitespace-nowrap">
+                            <a href="{{ route('security-guards.show', $guard->id) }}"
+                               class="text-emerald-600 hover:underline">View</a>
+                        </td>
+                    </tr>
+                @empty
+                    <tr>
+                        <td colspan="5" class="px-6 py-10 text-center text-gray-500">
+                            No security guards found.
+                        </td>
+                    </tr>
+                @endforelse
+            </tbody>
+        </table>
+    </div>
+
+    <div class="mt-6">
+        {{ $securityGuards->appends(request()->query())->links() }}
+    </div>
+    @endcan
 
 </div>
 
-{{-- Sync top/bottom horizontal scroll --}}
 <script>
+function guardsIndexColumns() {
+    const storageKey = 'guards_index_visible_columns_v1';
+
+    const defaultVisible = [
+        'license_number',
+        'city',
+        'actions',
+    ];
+
+    const toggleableColumns = [
+        { key: 'row_no', label: '#' },
+        { key: 'email', label: 'Email' },
+        { key: 'phone', label: 'Phone' },
+        { key: 'license_number', label: 'License #' },
+        { key: 'license_expiry', label: 'Expiry' },
+        { key: 'category', label: 'Category' },
+        { key: 'account_details', label: 'Account Details' },
+        { key: 'visa', label: 'Visa' },
+        { key: 'city', label: 'City' },
+        { key: 'docs', label: 'Docs' },
+        { key: 'actions', label: 'Actions' },
+    ];
+
+    let stored = [];
+    try {
+        stored = JSON.parse(localStorage.getItem(storageKey) || '[]');
+    } catch (e) {
+        stored = [];
+    }
+
+    return {
+        open: false,
+        toggleableColumns,
+        visible: Array.isArray(stored) && stored.length ? stored : defaultVisible,
+
+        isVisible(key) {
+            return this.visible.includes(key);
+        },
+
+        toggleColumn(key) {
+            if (this.isVisible(key)) {
+                this.visible = this.visible.filter(col => col !== key);
+            } else {
+                this.visible.push(key);
+            }
+            this.save();
+            this.$nextTick(() => window.dispatchEvent(new Event('resize')));
+        },
+
+        resetDefaults() {
+            this.visible = [...defaultVisible];
+            this.save();
+            this.$nextTick(() => window.dispatchEvent(new Event('resize')));
+        },
+
+        showAll() {
+            this.visible = this.toggleableColumns.map(col => col.key);
+            this.save();
+            this.$nextTick(() => window.dispatchEvent(new Event('resize')));
+        },
+
+        save() {
+            localStorage.setItem(storageKey, JSON.stringify(this.visible));
+        }
+    }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     const top = document.getElementById('guards-scroll-top');
     const topInner = document.getElementById('guards-scroll-top-inner');
@@ -221,7 +438,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     syncWidths();
 
-    // Recompute on resize/fonts/layout changes
     window.addEventListener('resize', syncWidths);
 
     let syncing = false;
@@ -239,6 +455,11 @@ document.addEventListener('DOMContentLoaded', () => {
         top.scrollLeft = bottom.scrollLeft;
         syncing = false;
     });
+
+    // extra safety for Alpine x-show column width changes
+    setTimeout(syncWidths, 50);
+    setTimeout(syncWidths, 200);
+    setTimeout(syncWidths, 500);
 });
 </script>
 @endsection

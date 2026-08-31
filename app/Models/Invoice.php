@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
 class Invoice extends Model
 {
@@ -42,7 +43,14 @@ class Invoice extends Model
 
     public function event(): BelongsTo
     {
+        // Legacy single-event (still used for backward compatibility)
         return $this->belongsTo(Event::class);
+    }
+
+    public function events(): BelongsToMany
+    {
+        return $this->belongsToMany(Event::class, 'invoice_event')
+            ->withTimestamps();
     }
 
     public function lines(): HasMany

@@ -29,14 +29,43 @@
 
     {{-- Controls --}}
     <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-3">
-        <form method="GET" class="flex items-center gap-2">
+
+        {{-- Search (Name / Email) --}}
+        <form method="GET" action="{{ route('clients.index') }}" class="flex flex-col sm:flex-row sm:items-center gap-2 w-full sm:w-auto">
+            <input type="text"
+                   name="q"
+                   value="{{ request('q', '') }}"
+                   placeholder="Search: name or email"
+                   class="w-full sm:w-80 border rounded px-3 py-2 text-sm bg-white">
+
+            <input type="hidden" name="per_page" value="{{ (int) request('per_page', 20) }}">
+
+            <div class="flex items-center gap-2">
+                <button type="submit"
+                        class="bg-gray-900 hover:bg-black text-white px-4 py-2 rounded-md text-sm transition">
+                    Search
+                </button>
+
+                @if(request()->filled('q'))
+                    <a href="{{ route('clients.index', ['per_page' => (int) request('per_page', 20)]) }}"
+                       class="px-3 py-2 rounded-md border text-sm bg-white hover:bg-gray-50 transition">
+                        Clear
+                    </a>
+                @endif
+            </div>
+        </form>
+
+        {{-- Per page --}}
+        <form method="GET" action="{{ route('clients.index') }}" class="flex items-center gap-2">
+            <input type="hidden" name="q" value="{{ request('q', '') }}">
+
             <label class="text-sm text-gray-600">Show</label>
 
             <select name="per_page"
                     onchange="this.form.submit()"
                     class="border rounded px-2 py-2 text-sm bg-white">
                 @foreach([10,20,30,40,50] as $size)
-                    <option value="{{ $size }}" {{ request('per_page', 20) == $size ? 'selected' : '' }}>
+                    <option value="{{ $size }}" {{ (int) request('per_page', 20) === $size ? 'selected' : '' }}>
                         {{ $size }}
                     </option>
                 @endforeach

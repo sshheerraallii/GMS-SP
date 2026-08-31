@@ -13,6 +13,7 @@ use App\Http\Controllers\GuardInvoiceController;
 use App\Http\Controllers\Reports\ReportsHomeController;
 use App\Http\Controllers\Reports\EventReportController;
 use App\Http\Controllers\Reports\GuardReportController;
+use App\Http\Controllers\ChaseupController;
 
 /*
 |--------------------------------------------------------------------------
@@ -31,14 +32,26 @@ Route::middleware('guest')->group(function () {
 */
 Route::middleware('auth')->group(function () {
 
-    // Home / Dashboard
+    /*
+    |--------------------------------------------------------------------------
+    | Home / Dashboard
+    |--------------------------------------------------------------------------
+    */
     Route::get('/', [SecurityGuardController::class, 'index'])->name('dashboard');
     Route::get('/home', fn () => view('home'))->name('home');
 
-    // Logout
+    /*
+    |--------------------------------------------------------------------------
+    | Logout
+    |--------------------------------------------------------------------------
+    */
     Route::delete('/logout', [AuthController::class, 'logout'])->name('logout');
 
-    // Register Admin (keep restricted as you wish)
+    /*
+    |--------------------------------------------------------------------------
+    | Register Admin (keep restricted as you wish)
+    |--------------------------------------------------------------------------
+    */
     Route::get('/register', [AuthController::class, 'register'])->name('login.register');
     Route::post('/register', [AuthController::class, 'store'])->name('login.register.store');
 
@@ -53,6 +66,9 @@ Route::middleware('auth')->group(function () {
         ->group(function () {
 
             Route::get('/', [InvoiceController::class, 'index'])->name('index');
+
+            // IMPORTANT: static paths BEFORE "/{invoice}"
+
             Route::get('/{invoice}', [InvoiceController::class, 'show'])
                 ->whereNumber('invoice')
                 ->name('show');
@@ -92,44 +108,36 @@ Route::middleware('auth')->group(function () {
     Route::middleware('can:manage-invoices')->group(function () {
 
         Route::prefix('guard-invoices')->name('guard-invoices.')->group(function () {
+
             Route::get('/', [GuardInvoiceController::class, 'index'])->name('index');
 
             Route::get('/{guardInvoice}', [GuardInvoiceController::class, 'show'])
                 ->whereNumber('guardInvoice')
                 ->name('show');
 
-                Route::get('/{guardInvoice}/edit', [GuardInvoiceController::class, 'edit'])
-    ->whereNumber('guardInvoice')
-    ->name('edit');
+            Route::get('/{guardInvoice}/edit', [GuardInvoiceController::class, 'edit'])
+                ->whereNumber('guardInvoice')
+                ->name('edit');
 
-Route::put('/{guardInvoice}', [GuardInvoiceController::class, 'update'])
-    ->whereNumber('guardInvoice')
-    ->name('update');
+            Route::put('/{guardInvoice}', [GuardInvoiceController::class, 'update'])
+                ->whereNumber('guardInvoice')
+                ->name('update');
 
-Route::post('/{guardInvoice}/issue', [GuardInvoiceController::class, 'issue'])
-    ->whereNumber('guardInvoice')
-    ->name('issue');
+            Route::post('/{guardInvoice}/issue', [GuardInvoiceController::class, 'issue'])
+                ->whereNumber('guardInvoice')
+                ->name('issue');
 
-Route::post('/{guardInvoice}/mark-paid', [GuardInvoiceController::class, 'markPaid'])
-    ->whereNumber('guardInvoice')
-    ->name('mark-paid');
+            Route::post('/{guardInvoice}/mark-paid', [GuardInvoiceController::class, 'markPaid'])
+                ->whereNumber('guardInvoice')
+                ->name('mark-paid');
 
-Route::get('/{guardInvoice}/pdf', [GuardInvoiceController::class, 'pdf'])
-    ->whereNumber('guardInvoice')
-    ->name('pdf');
+            Route::get('/{guardInvoice}/pdf', [GuardInvoiceController::class, 'pdf'])
+                ->whereNumber('guardInvoice')
+                ->name('pdf');
 
-Route::get('/{guardInvoice}/download', [GuardInvoiceController::class, 'download'])
-    ->whereNumber('guardInvoice')
-    ->name('download');
-
-
-            // (Later)
-            // Route::get('/{guardInvoice}/edit', [GuardInvoiceController::class, 'edit'])->name('edit');
-            // Route::put('/{guardInvoice}', [GuardInvoiceController::class, 'update'])->name('update');
-            // Route::post('/{guardInvoice}/issue', [GuardInvoiceController::class, 'issue'])->name('issue');
-            // Route::post('/{guardInvoice}/mark-paid', [GuardInvoiceController::class, 'markPaid'])->name('mark-paid');
-            // Route::get('/{guardInvoice}/pdf', [GuardInvoiceController::class, 'pdf'])->name('pdf');
-            // Route::get('/{guardInvoice}/download', [GuardInvoiceController::class, 'download'])->name('download');
+            Route::get('/{guardInvoice}/download', [GuardInvoiceController::class, 'download'])
+                ->whereNumber('guardInvoice')
+                ->name('download');
         });
 
         // From Event page: bulk generate guard invoices
@@ -152,6 +160,7 @@ Route::get('/{guardInvoice}/download', [GuardInvoiceController::class, 'download
 
             // Event Reports
             Route::get('/events', [EventReportController::class, 'index'])->name('events.index');
+
             Route::get('/events/{event}', [EventReportController::class, 'show'])
                 ->whereNumber('event')
                 ->name('events.show');
@@ -162,10 +171,19 @@ Route::get('/{guardInvoice}/download', [GuardInvoiceController::class, 'download
 
             // Guard Reports
             Route::get('/guards', [GuardReportController::class, 'index'])->name('guards.index');
+
             Route::get('/guards/{guard}/events/{event}', [GuardReportController::class, 'show'])
                 ->whereNumber('guard')
                 ->whereNumber('event')
                 ->name('guards.show');
+
+            // Guard Statement (date-range payroll PDF) — Super Admin + Accountant only
+            Route::get('/guard-statement', [\App\Http\Controllers\Reports\GuardStatementController::class, 'form'])
+                ->middleware('can:view-guard-statement')
+                ->name('guardStatement.form');
+            Route::get('/guard-statement/download', [\App\Http\Controllers\Reports\GuardStatementController::class, 'download'])
+                ->middleware('can:view-guard-statement')
+                ->name('guardStatement.download');
         });
 
     /*
@@ -177,10 +195,20 @@ Route::get('/{guardInvoice}/download', [GuardInvoiceController::class, 'download
 
         Route::middleware('permission:guards.view')->group(function () {
             Route::get('/', [SecurityGuardController::class, 'index'])->name('index');
+
             Route::get('/{security_guard}', [SecurityGuardController::class, 'show'])
                 ->whereNumber('security_guard')
                 ->name('show');
+
+            Route::get('/{security_guard}/pdf', [SecurityGuardController::class, 'pdf'])
+                ->whereNumber('security_guard')
+                ->name('pdf');
         });
+        
+        Route::get('/{security_guard}/custom-pdf', [SecurityGuardController::class, 'customPdf'])
+    ->whereNumber('security_guard')
+    ->name('customPdf');
+        
 
         Route::middleware('permission:guards.create')->group(function () {
             Route::get('/create', [SecurityGuardController::class, 'create'])->name('create');
@@ -213,6 +241,7 @@ Route::get('/{guardInvoice}/download', [GuardInvoiceController::class, 'download
 
         Route::middleware('permission:clients.view')->group(function () {
             Route::get('/', [ClientController::class, 'index'])->name('index');
+
             Route::get('/{client}', [ClientController::class, 'show'])
                 ->whereNumber('client')
                 ->name('show');
@@ -248,7 +277,32 @@ Route::get('/{guardInvoice}/download', [GuardInvoiceController::class, 'download
     Route::prefix('events')->name('events.')->group(function () {
 
         Route::middleware('permission:events.view')->group(function () {
+
             Route::get('/', [EventController::class, 'index'])->name('index');
+
+            // Excel Staff Sheet (MUST be inside /events prefix, so path is "/events/{event}/staff-sheet")
+            Route::get('/{event}/staff-sheet', [EventController::class, 'exportStaffSheet'])
+                ->whereNumber('event')
+                ->name('staffSheet');
+                
+                Route::get('/{event}/staff-payment-sheet', [EventController::class, 'exportStaffPaymentSheet'])
+    ->whereNumber('event')
+    ->name('staffPaymentSheet');
+    
+    
+    Route::get('/{event}/time-sheet', [EventController::class, 'exportTimeSheet'])
+    ->whereNumber('event')
+    ->name('timeSheet');
+
+            Route::get('/{event}/time-sheet-no-details', [EventController::class, 'exportTimeSheetReduced'])
+                ->whereNumber('event')
+                ->name('timeSheetReduced');
+
+            Route::get('/{event}/staff-payment-sheet-no-details', [EventController::class, 'exportStaffPaymentSheetReduced'])
+                ->whereNumber('event')
+                ->name('staffPaymentSheetReduced');
+                
+
             Route::get('/{event}', [EventController::class, 'show'])
                 ->whereNumber('event')
                 ->name('show');
@@ -256,6 +310,7 @@ Route::get('/{guardInvoice}/download', [GuardInvoiceController::class, 'download
 
         Route::middleware('permission:events.create')->group(function () {
             Route::get('/create', [EventController::class, 'create'])->name('create');
+            Route::post('/import-preview', [EventController::class, 'importPreview'])->name('importPreview');
             Route::post('/', [EventController::class, 'store'])->name('store');
         });
 
@@ -267,6 +322,16 @@ Route::get('/{guardInvoice}/download', [GuardInvoiceController::class, 'download
             Route::match(['put', 'patch'], '/{event}', [EventController::class, 'update'])
                 ->whereNumber('event')
                 ->name('update');
+                
+                Route::post('/{event}/additional-days-preview', [EventController::class, 'additionalDaysPreview'])
+    ->whereNumber('event')
+    ->name('additionalDaysPreview');
+
+Route::post('/{event}/additional-days-import', [EventController::class, 'importAdditionalDays'])
+    ->whereNumber('event')
+    ->name('importAdditionalDays');
+                
+                
         });
 
         Route::middleware('permission:events.delete')->group(function () {
@@ -279,7 +344,6 @@ Route::get('/{guardInvoice}/download', [GuardInvoiceController::class, 'download
         |--------------------------------------------------------------------------
         | Events – Assign Guards & Schedules
         |--------------------------------------------------------------------------
-        | Shift Assigner role has: events.view + shifts.assign
         */
         Route::middleware('permission:shifts.assign')->group(function () {
             Route::get('/{event}/guards', [EventController::class, 'guards'])
@@ -289,8 +353,58 @@ Route::get('/{guardInvoice}/download', [GuardInvoiceController::class, 'download
             Route::post('/{event}/update-guards', [EventController::class, 'updateGuards'])
                 ->whereNumber('event')
                 ->name('updateGuards');
+                
+                Route::post('/{event}/guards/slot/save', [EventController::class, 'saveGuardSlot'])
+    ->whereNumber('event')
+    ->name('saveGuardSlot');
+
+            Route::post('/{event}/guards/toggle-cancel', [EventController::class, 'toggleCancelShift'])
+                ->whereNumber('event')
+                ->name('toggleCancelShift');
+                
         });
     });
+
+    /*
+    |--------------------------------------------------------------------------
+    | ChaseUp
+    |--------------------------------------------------------------------------
+    */
+    /*
+    |--------------------------------------------------------------------------
+    | Executive homepage (Super Admin only)
+    |--------------------------------------------------------------------------
+    */
+    Route::middleware('can:view-executive')
+        ->prefix('executive')
+        ->name('executive.')
+        ->group(function () {
+            Route::get('/', [\App\Http\Controllers\ExecutiveController::class, 'index'])->name('index');
+            Route::post('/events/{event}/charge-rate', [\App\Http\Controllers\ExecutiveController::class, 'setChargeRate'])
+                ->whereNumber('event')->name('chargeRate');
+            Route::post('/events/{event}/expenses', [\App\Http\Controllers\ExecutiveController::class, 'storeExpense'])
+                ->whereNumber('event')->name('expenses.store');
+            Route::delete('/expenses/{eventExpense}', [\App\Http\Controllers\ExecutiveController::class, 'deleteExpense'])
+                ->whereNumber('eventExpense')->name('expenses.destroy');
+        });
+
+    Route::prefix('chaseup')->name('chaseup.')->group(function () {
+        Route::get('/', [ChaseupController::class, 'index'])->name('index');
+        Route::get('/reminders', [ChaseupController::class, 'reminders'])->name('reminders');
+        Route::post('/shift/{eventShift}/field', [ChaseupController::class, 'updateField'])
+            ->whereNumber('eventShift')
+            ->name('updateField');
+
+        Route::get('/shift/{eventShift}/latest-actor', [ChaseupController::class, 'latestActor'])
+            ->whereNumber('eventShift')
+            ->name('latestActor');
+
+        Route::get('/shift/{eventShift}/history', [ChaseupController::class, 'history'])
+            ->whereNumber('eventShift')
+            ->name('history');
+    });
+
+
 
     /*
     |--------------------------------------------------------------------------

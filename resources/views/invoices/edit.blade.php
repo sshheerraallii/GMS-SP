@@ -4,7 +4,6 @@
 <div class="max-w-7xl mx-auto px-6 py-8"
      x-data="invoiceEditor(@js($invoice), @js($invoice->lines->values()), {{ $invoice->isDraft() ? 'true' : 'false' }})">
 
-    {{-- Header --}}
     <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between mb-6">
         <div class="space-y-1">
             <div class="flex items-center gap-3">
@@ -73,7 +72,6 @@
         @csrf
         @method('PUT')
 
-        {{-- Meta --}}
         <div class="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
             <div class="border-b border-gray-200 px-6 py-4 flex items-center justify-between">
                 <div class="font-semibold text-gray-900">Invoice Details</div>
@@ -125,7 +123,6 @@
             </div>
         </div>
 
-        {{-- Lines --}}
         <div class="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
             <div class="border-b border-gray-200 px-6 py-4 flex items-center justify-between">
                 <div class="font-semibold text-gray-900">Invoice Lines</div>
@@ -134,8 +131,14 @@
                     @if($invoice->isDraft())
                         <button type="button"
                                 class="px-3 py-2 rounded-xl bg-gray-900 text-white hover:bg-gray-800 text-sm font-medium"
-                                @click="addLine()">
-                            + Add Line
+                                @click="addGuardLine()">
+                            + Add Guard Line
+                        </button>
+
+                        <button type="button"
+                                class="px-3 py-2 rounded-xl border border-gray-300 text-gray-800 hover:bg-gray-50 text-sm font-medium"
+                                @click="addExpenseLine()">
+                            + Add Expense Line
                         </button>
                     @endif
                 </div>
@@ -150,7 +153,7 @@
                             <th class="px-4 py-3 text-left min-w-[280px]">Detail</th>
                             <th class="px-4 py-3 text-left w-60">Shift</th>
                             <th class="px-4 py-3 text-left w-28">Qty</th>
-                            <th class="px-4 py-3 text-left w-36">Line Hours</th>
+                            <th class="px-4 py-3 text-left w-32">Hours</th>
                             <th class="px-4 py-3 text-left w-36">Rate</th>
                             <th class="px-4 py-3 text-left w-36">Amount</th>
                             <th class="px-4 py-3 text-right w-28"></th>
@@ -161,6 +164,10 @@
                         <template x-for="(line, idx) in lines" :key="line._key">
                             <tr class="hover:bg-gray-50">
                                 <td class="px-4 py-3 align-top text-gray-700" x-text="idx + 1"></td>
+
+                                <input type="hidden"
+                                       :name="`lines[${idx}][kind]`"
+                                       x-model="line.kind">
 
                                 <td class="px-4 py-3 align-top">
                                     <input type="date"
@@ -177,32 +184,40 @@
                                            :name="`lines[${idx}][description]`"
                                            x-model="line.description"
                                            @input="recalc()"
-                                           :disabled="!canEdit">
+                                           :disabled="!canEdit"
+                                           :placeholder="line.kind === 'EXPENSE' ? 'e.g. Food / Travel / Parking' : 'Provision of Guards'">
                                 </td>
 
                                 <td class="px-4 py-3 align-top">
-                                    <div class="flex items-center gap-2">
-                                        <input type="time"
-                                               class="w-full rounded-xl border-gray-300 focus:border-gray-900 focus:ring-gray-900"
-                                               :name="`lines[${idx}][shift_start]`"
-                                               x-model="line.shift_start"
-                                               @input="recalc()"
-                                               :disabled="!canEdit">
+                                    <template x-if="line.kind === 'GUARD'">
+                                        <div>
+                                            <div class="flex items-center gap-2">
+                                                <input type="time"
+                                                       class="w-full rounded-xl border-gray-300 focus:border-gray-900 focus:ring-gray-900"
+                                                       :name="`lines[${idx}][shift_start]`"
+                                                       x-model="line.shift_start"
+                                                       :disabled="!canEdit">
 
-                                        <span class="text-gray-400">—</span>
+                                                <span class="text-gray-400">—</span>
 
-                                        <input type="time"
-                                               class="w-full rounded-xl border-gray-300 focus:border-gray-900 focus:ring-gray-900"
-                                               :name="`lines[${idx}][shift_end]`"
-                                               x-model="line.shift_end"
-                                               @input="recalc()"
-                                               :disabled="!canEdit">
-                                    </div>
+                                                <input type="time"
+                                                       class="w-full rounded-xl border-gray-300 focus:border-gray-900 focus:ring-gray-900"
+                                                       :name="`lines[${idx}][shift_end]`"
+                                                       x-model="line.shift_end"
+                                                       :disabled="!canEdit">
+                                            </div>
 
-                                    <div class="text-xs text-gray-500 mt-2 flex items-center justify-between">
-                                        <span>Hours: <span class="font-semibold text-gray-900" x-text="line.hours.toFixed(2)"></span></span>
-                                        <span class="text-gray-400" x-show="line._overnight">Overnight</span>
-                                    </div>
+                                            <div class="text-xs text-gray-500 mt-2">
+                                                Reference only. Manual edit uses Hours as final invoice value.
+                                            </div>
+                                        </div>
+                                    </template>
+
+                                    <template x-if="line.kind === 'EXPENSE'">
+                                        <div class="text-xs text-gray-500">
+                                            Expense line (no shift)
+                                        </div>
+                                    </template>
                                 </td>
 
                                 <td class="px-4 py-3 align-top">
@@ -215,10 +230,24 @@
                                 </td>
 
                                 <td class="px-4 py-3 align-top">
-    <div class="font-semibold text-gray-900" x-text="(Number(line.quantity || 0) * Number(line.hours || 0)).toFixed(2)"></div>
-    <div class="text-xs text-gray-500">qty × hours</div>
-</td>
+                                    <template x-if="line.kind === 'GUARD'">
+                                        <input type="number" min="0" max="24" step="0.01"
+                                               class="w-full rounded-xl border-gray-300 focus:border-gray-900 focus:ring-gray-900"
+                                               :name="`lines[${idx}][hours]`"
+                                               x-model.number="line.hours"
+                                               @input="recalc()"
+                                               :disabled="!canEdit">
+                                    </template>
 
+                                    <template x-if="line.kind === 'EXPENSE'">
+                                        <div>
+                                            <input type="hidden"
+                                                   :name="`lines[${idx}][hours]`"
+                                                   value="0">
+                                            <div class="text-gray-400">—</div>
+                                        </div>
+                                    </template>
+                                </td>
 
                                 <td class="px-4 py-3 align-top">
                                     <input type="number" min="0" step="0.01"
@@ -255,7 +284,6 @@
                 </table>
             </div>
 
-            {{-- Totals --}}
             <div class="border-t border-gray-200 p-6">
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div class="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm">
@@ -292,7 +320,6 @@
             </div>
         </div>
 
-        {{-- Bottom save for long tables --}}
         @if($invoice->isDraft())
             <div class="flex items-center justify-end">
                 <button type="submit"
@@ -308,26 +335,27 @@
 function invoiceEditor(invoice, serverLines, canEdit) {
     const vatMode = (Number(invoice.vat_rate || 0) > 0) ? 'VAT' : 'NON_VAT';
 
-    const lines = (serverLines || []).map((l, idx) => ({
-        _key: (l.id ?? ('seed-' + idx)),
+    const lines = (serverLines || []).map((l, idx) => {
+        const shiftStart = (l.shift_start ? String(l.shift_start).slice(0, 5) : '');
+        const shiftEnd   = (l.shift_end ? String(l.shift_end).slice(0, 5) : '');
 
-        // IMPORTANT FIX: input[type=date] needs YYYY-MM-DD only
-        service_date: (l.service_date ? String(l.service_date).slice(0, 10) : ''),
+        const isExpense = (
+            (String(l.shift_start || '').startsWith('00:00') && String(l.shift_end || '').startsWith('00:00'))
+        );
 
-        description: (l.description ?? 'Provision of Guards'),
-
-        // input[type=time] needs HH:MM
-        shift_start: (l.shift_start ? String(l.shift_start).slice(0, 5) : ''),
-        shift_end:   (l.shift_end ? String(l.shift_end).slice(0, 5) : ''),
-
-        quantity: Number(l.quantity ?? 0),
-        rate: Number(l.rate ?? invoice.charge_rate_snapshot ?? 0),
-
-        hours: Number(l.hours ?? 0),
-        amount: Number(l.amount ?? 0),
-
-        _overnight: false,
-    }));
+        return {
+            _key: (l.id ?? ('seed-' + idx)),
+            service_date: (l.service_date ? String(l.service_date).slice(0, 10) : ''),
+            kind: isExpense ? 'EXPENSE' : 'GUARD',
+            description: (l.description ?? (isExpense ? '' : 'Provision of Guards')),
+            shift_start: isExpense ? '00:00' : shiftStart,
+            shift_end:   isExpense ? '00:00' : shiftEnd,
+            quantity: Number(l.quantity ?? 0),
+            rate: Number(l.rate ?? invoice.charge_rate_snapshot ?? 0),
+            hours: Number(l.hours ?? 0),
+            amount: Number(l.amount ?? 0),
+        };
+    });
 
     return {
         canEdit: !!canEdit,
@@ -341,11 +369,12 @@ function invoiceEditor(invoice, serverLines, canEdit) {
 
         init() { this.recalc(); },
 
-        addLine() {
+        addGuardLine() {
             if (!this.canEdit) return;
 
             this.lines.push({
                 _key: 'new-' + crypto.randomUUID(),
+                kind: 'GUARD',
                 service_date: '',
                 description: 'Provision of Guards',
                 shift_start: '',
@@ -354,7 +383,25 @@ function invoiceEditor(invoice, serverLines, canEdit) {
                 rate: Number(invoice.charge_rate_snapshot ?? 0),
                 hours: 0,
                 amount: 0,
-                _overnight: false,
+            });
+
+            this.recalc();
+        },
+
+        addExpenseLine() {
+            if (!this.canEdit) return;
+
+            this.lines.push({
+                _key: 'new-' + crypto.randomUUID(),
+                kind: 'EXPENSE',
+                service_date: '',
+                description: '',
+                shift_start: '00:00',
+                shift_end: '00:00',
+                quantity: 0,
+                rate: 0,
+                hours: 0,
+                amount: 0,
             });
 
             this.recalc();
@@ -372,14 +419,24 @@ function invoiceEditor(invoice, serverLines, canEdit) {
             let totalHours = 0;
 
             for (const l of this.lines) {
-                const result = this.hoursBetween(l.shift_start, l.shift_end);
-                l.hours = result.hours;
-                l._overnight = result.overnight;
+                const kind = (l.kind === 'EXPENSE') ? 'EXPENSE' : 'GUARD';
+                l.kind = kind;
 
                 const qty = Number(l.quantity || 0);
                 const rate = Number(l.rate || 0);
 
+                if (kind === 'EXPENSE') {
+                    l.hours = 0;
+                    l.shift_start = '00:00';
+                    l.shift_end = '00:00';
+                    l.amount = this.round2(qty * rate);
+                    subtotal += l.amount;
+                    continue;
+                }
+
+                l.hours = this.round2(Math.max(0, Number(l.hours || 0)));
                 l.amount = this.round2(qty * l.hours * rate);
+
                 subtotal += l.amount;
                 totalHours += (qty * l.hours);
             }
@@ -392,27 +449,6 @@ function invoiceEditor(invoice, serverLines, canEdit) {
             this.total = this.round2(this.subtotal + this.vatAmount);
         },
 
-        hoursBetween(start, end) {
-            if (!start || !end) return { hours: 0, overnight: false };
-
-            const s = this.toMinutes(start);
-            let e = this.toMinutes(end);
-
-            let overnight = false;
-            if (e < s) {
-                e += 1440;
-                overnight = true;
-            }
-
-            const mins = Math.max(0, e - s);
-            return { hours: this.round2(mins / 60), overnight };
-        },
-
-        toMinutes(t) {
-            const [h, m] = String(t).split(':');
-            return (Number(h || 0) * 60) + Number(m || 0);
-        },
-
         round2(n) {
             return Math.round((Number(n) + Number.EPSILON) * 100) / 100;
         },
@@ -421,7 +457,7 @@ function invoiceEditor(invoice, serverLines, canEdit) {
             const x = Number(n || 0);
             return x.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
         },
-    }
+    };
 }
 </script>
 @endsection

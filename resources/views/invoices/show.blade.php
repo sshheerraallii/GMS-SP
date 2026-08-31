@@ -45,6 +45,15 @@
         <div class="mt-6 border-t pt-6">
             <h2 class="text-sm font-semibold text-gray-900 mb-3">Lines</h2>
 
+            @php
+                // Expense lines are stored with sentinel shift 00:00:00 - 00:00:00 (no DB change required)
+                $isExpenseLine = function ($line) {
+                    $s = (string)($line->shift_start ?? '');
+                    $e = (string)($line->shift_end ?? '');
+                    return str_starts_with($s, '00:00') && str_starts_with($e, '00:00');
+                };
+            @endphp
+
             <div class="overflow-x-auto">
                 <table class="min-w-full text-sm">
                     <thead class="bg-gray-50 border-y">
@@ -52,9 +61,10 @@
                             <th class="px-4 py-2 font-medium">#</th>
                             <th class="px-4 py-2 font-medium">Date</th>
                             <th class="px-4 py-2 font-medium">Detail</th>
+                            <th class="px-4 py-2 font-medium">Type</th>
                             <th class="px-4 py-2 font-medium">Shift</th>
                             <th class="px-4 py-2 font-medium text-right">Qty</th>
-                            <th class="px-4 py-2 font-medium text-right">Total Hours Per Guard</th>
+                            <th class="px-4 py-2 font-medium text-right">Hours</th>
                             <th class="px-4 py-2 font-medium text-right">Rate</th>
                             <th class="px-4 py-2 font-medium text-right">Amount</th>
                         </tr>
@@ -62,6 +72,8 @@
 
                     <tbody class="divide-y">
                         @forelse($invoice->lines as $line)
+                            @php $isExpense = $isExpenseLine($line); @endphp
+
                             <tr class="text-gray-900">
                                 <td class="px-4 py-2 whitespace-nowrap">{{ $line->line_no }}</td>
 
@@ -70,11 +82,32 @@
                                 </td>
 
                                 <td class="px-4 py-2">
-                                    {{ $line->description }}
+                                    <div class="font-medium text-gray-900">{{ $line->description }}</div>
+                                    @if($isExpense)
+                                        <div class="text-xs text-gray-500">Extra expense</div>
+                                    @endif
+                                </td>
+
+                                <td class="px-4 py-2 whitespace-nowrap">
+                                    @if($isExpense)
+                                        <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-700">
+                                            EXPENSE
+                                        </span>
+                                    @else
+                                        <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800">
+                                            GUARD
+                                        </span>
+                                    @endif
                                 </td>
 
                                 <td class="px-4 py-2 whitespace-nowrap text-gray-700">
-                                    {{ $line->shift_start ? substr($line->shift_start, 0, 5) : '—' }}-{{ $line->shift_end ? substr($line->shift_end, 0, 5) : '—' }}
+                                    @if($isExpense)
+                                        <span class="text-gray-400">—</span>
+                                    @else
+                                        {{ $line->shift_start ? substr($line->shift_start, 0, 5) : '—' }}
+                                        -
+                                        {{ $line->shift_end ? substr($line->shift_end, 0, 5) : '—' }}
+                                    @endif
                                 </td>
 
                                 <td class="px-4 py-2 whitespace-nowrap text-right">
@@ -82,7 +115,11 @@
                                 </td>
 
                                 <td class="px-4 py-2 whitespace-nowrap text-right">
-                                    {{ number_format((float)($line->hours ?? 0), 2) }}
+                                    @if($isExpense)
+                                        <span class="text-gray-400">—</span>
+                                    @else
+                                        {{ number_format((float)($line->hours ?? 0), 2) }}
+                                    @endif
                                 </td>
 
                                 <td class="px-4 py-2 whitespace-nowrap text-right">
@@ -95,7 +132,7 @@
                             </tr>
                         @empty
                             <tr>
-                                <td colspan="8" class="px-4 py-8 text-center text-gray-500">No lines.</td>
+                                <td colspan="9" class="px-4 py-8 text-center text-gray-500">No lines.</td>
                             </tr>
                         @endforelse
                     </tbody>
@@ -125,6 +162,13 @@
                     </div>
                 </div>
             </div>
+
+            @if($invoice->payment_notes)
+                <div class="mt-6 border-t pt-6">
+                    <div class="text-sm font-semibold text-gray-900 mb-2">Payment Notes</div>
+                    <div class="text-sm text-gray-700 whitespace-pre-line">{{ $invoice->payment_notes }}</div>
+                </div>
+            @endif
         </div>
     </div>
 </div>

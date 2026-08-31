@@ -48,6 +48,7 @@
 
             <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <x-input label="Full Name" name="fullname" />
+                <x-input label="Date of Birth" name="dob" type="date" />
                 <x-input label="Email Address" name="email_address" type="email" />
                 <x-input label="Phone Number" name="phone_number" />
                 <x-input label="Address" name="adresse" />
@@ -70,6 +71,7 @@
                 </x-select>
 
                 <x-input label="RTW Share Code" name="rtw_share_code" />
+                 <x-input label="Share-Code Expiry" name="share_code_expiry" type="date" />
                 <x-input label="NI Number" name="ni_number" />
 
                 <x-select label="Visa Status" name="visa_status">
@@ -105,29 +107,42 @@
         </section>
 
         <!-- ================= Bank Details ================= -->
-        <section class="bg-white rounded-xl shadow p-6">
-            <h2 class="text-lg font-medium mb-6">Bank Details</h2>
+<section class="bg-white rounded-xl shadow p-6">
+    <h2 class="text-lg font-medium mb-6">Bank Details</h2>
 
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div>
-                    <label class="block text-sm font-medium mb-1">Sort Code</label>
-                    <input type="text"
-                           name="sort_code"
-                           maxlength="6"
-                           value="{{ old('sort_code') }}"
-                           class="w-full border rounded px-3 py-2">
-                </div>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div>
+            <label class="block text-sm font-medium mb-1">Sort Code</label>
+            <input type="text"
+                   name="sort_code"
+                   maxlength="6"
+                   value="{{ old('sort_code') }}"
+                   class="w-full border rounded px-3 py-2">
+        </div>
 
-                <div>
-                    <label class="block text-sm font-medium mb-1">Account Number</label>
-                    <input type="text"
-                           name="account_number"
-                           maxlength="8"
-                           value="{{ old('account_number') }}"
-                           class="w-full border rounded px-3 py-2">
-                </div>
-            </div>
-        </section>
+        <div>
+            <label class="block text-sm font-medium mb-1">Account Number</label>
+            <input type="text"
+                   name="account_number"
+                   maxlength="8"
+                   value="{{ old('account_number') }}"
+                   class="w-full border rounded px-3 py-2">
+        </div>
+
+        <div>
+            <label class="block text-sm font-medium mb-1">Beneficiary Name</label>
+            <input type="text"
+                   name="beneficiary_name"
+                   value="{{ old('beneficiary_name') }}"
+                   class="w-full border rounded px-3 py-2"
+                   placeholder="e.g. John Smith" />
+            @error('beneficiary_name')
+                <p class="text-red-600 text-xs mt-1">{{ $message }}</p>
+            @enderror
+        </div>
+    </div>
+</section>
+
 
         <!-- ================= DOCUMENTS ================= -->
         <section class="bg-white rounded-xl shadow p-6">
@@ -136,6 +151,7 @@
             <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <x-file-upload label="Profile Picture" name="profile_picture" />
                 <x-file-upload label="SIA License" name="sia_license" />
+                <x-file-upload label="SIA License (Back)" name="sia_license_back" />
                 <x-file-upload label="Driving License" name="driving_license_doc" />
                 <x-file-upload label="Passport" name="passport" />
                 <x-file-upload label="E-Visa Screenshot" name="evisa_ss" />
@@ -143,6 +159,21 @@
                 <x-file-upload label="Proof of Address 1" name="proof_add1" />
                 <x-file-upload label="Proof of Address 2" name="proof_add2" />
                 <x-file-upload label="NI Letter" name="ni_letter" />
+                
+                <x-file-upload label="ACT Blue" name="act_blue" />
+<x-file-upload label="ACT Orange" name="act_orange" />
+<x-file-upload label="ACT Green" name="act_green" />
+
+<x-file-upload label="First Aid" name="first_aid" />
+
+<x-file-upload label="CCTV License Front" name="cctv_front" />
+<x-file-upload label="CCTV License Back" name="cctv_back" />
+
+<x-file-upload label="Other Document 1" name="other_doc1" />
+<x-file-upload label="Other Document 2" name="other_doc2" />
+                
+                
+                
             </div>
         </section>
 

@@ -16,6 +16,7 @@ class Client extends Model
         'contact_number',
         'payment_terms',
         'type',
+        'color',
     ];
 
     // Client has many Events

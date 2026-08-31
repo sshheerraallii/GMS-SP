@@ -16,7 +16,7 @@
         </div>
     @endif
 
-    <form action="{{ route('events.store') }}" method="POST" class="space-y-5">
+   <form action="{{ route('events.store') }}" method="POST" enctype="multipart/form-data" class="space-y-5">
         @csrf
 
         {{-- EVENT NAME --}}
@@ -92,6 +92,33 @@
                 @endforeach
             </select>
         </div>
+        
+        
+        
+                {{-- IMPORT XLSX --}}
+        <div>
+            <label class="block font-medium mb-1">Import Excel Template (.xlsx)</label>
+            <input type="file"
+                   name="import_file"
+                   x-ref="importFile"
+                   @change="previewImport($event)"
+                   accept=".xlsx,.xls"
+                   class="w-full border rounded px-3 py-2 bg-white">
+
+            <p class="text-sm text-gray-500 mt-1">
+                Optional. If provided, Start Date, End Date, and Guards Required Per Day will be auto-filled from the Excel.
+               Date, Start Time, End Time, Break Hours, and Location are used. Other columns are ignored.
+            </p>
+
+            <template x-if="importMessage">
+                <p class="text-sm mt-2"
+                   :class="importError ? 'text-red-600' : 'text-green-600'"
+                   x-text="importMessage"></p>
+            </template>
+        </div>
+        
+        
+        
 
         {{-- START & END DATE --}}
         <div class="flex gap-4">
@@ -105,8 +132,14 @@
                 <input type="date" name="end_date" x-model="end_date"
                        class="w-full border rounded px-3 py-2">
             </div>
+            
+                    <p class="text-sm text-gray-500">
+            If Excel is uploaded, these dates should match the imported file range.
+        </p>
+            
         </div>
 
+        @can('view-charge-rate')
         {{-- CHARGE RATE --}}
         <div>
             <label class="block font-medium mb-1">Charge Rate / Hour</label>
@@ -114,6 +147,7 @@
                    value="{{ old('charge_rate') }}"
                    class="w-full border rounded px-3 py-2">
         </div>
+        @endcan
 
         {{-- INVOICE DATE --}}
         <div>
@@ -146,19 +180,23 @@
                       class="w-full border rounded px-3 py-2">{{ old('instructions') }}</textarea>
         </div>
 
-        {{-- SHIFT MODE --}}
+                {{-- SHIFT MODE --}}
         <div>
             <label class="block font-medium mb-2">Shift Type</label>
             <div class="space-y-2">
                 <label class="flex items-center gap-2">
-                    <input type="radio" name="shift_mode" value="same" checked>
+                    <input type="radio" name="shift_mode" value="same" x-model="shift_mode">
                     <span>Same shift for all guards</span>
                 </label>
                 <label class="flex items-center gap-2">
-                    <input type="radio" name="shift_mode" value="different">
+                    <input type="radio" name="shift_mode" value="different" x-model="shift_mode">
                     <span>Different shifts for each guard</span>
                 </label>
             </div>
+
+            <template x-if="shiftModeMessage">
+                <p class="text-sm mt-2 text-blue-700" x-text="shiftModeMessage"></p>
+            </template>
         </div>
 
         {{-- GUARDS PER DAY --}}
@@ -170,10 +208,10 @@
                     <div class="flex items-center gap-4 border-b py-2">
                         <span class="w-32 font-medium" x-text="day"></span>
 
-                        <input type="number" min="0"
-                               :name="'daily_guards['+day+']'"
-                               class="border rounded px-2 py-1 w-24"
-                               value="0">
+                       <input type="number" min="0"
+       :name="'daily_guards['+day+']'"
+       x-model="dailyGuardCounts[day]"
+       class="border rounded px-2 py-1 w-24">
                     </div>
                 </template>
 
@@ -194,6 +232,8 @@
     </div>
 
 <script>
+    
+    
 function eventForm() {
     return {
         start_date: '',
@@ -202,6 +242,13 @@ function eventForm() {
         search: '',
         selectedGuards: [],
         days: [],
+        dailyGuardCounts: {},
+        importMessage: '',
+        importError: false,
+         shift_mode: 'same',
+        shiftModeMessage: '',
+        globalImportedStart: '',
+        globalImportedEnd: '',
 
         init() {
             this.$watch('start_date', () => this.generateDays());
@@ -209,14 +256,81 @@ function eventForm() {
         },
 
         generateDays() {
+            const previousCounts = { ...this.dailyGuardCounts };
+
             this.days = [];
+            this.dailyGuardCounts = {};
+
             if (!this.start_date || !this.end_date) return;
 
-            let start = new Date(this.start_date);
-            let end = new Date(this.end_date);
+            let start = new Date(this.start_date + 'T00:00:00');
+            let end = new Date(this.end_date + 'T00:00:00');
 
             for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-                this.days.push(d.toISOString().slice(0, 10));
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    const dateKey = `${year}-${month}-${day}`;
+
+    this.days.push(dateKey);
+    this.dailyGuardCounts[dateKey] = previousCounts[dateKey] ?? 0;
+}
+        },
+
+        async previewImport(event) {
+            const file = event.target.files?.[0];
+            if (!file) return;
+
+            this.importMessage = 'Reading Excel...';
+            this.importError = false;
+
+            const formData = new FormData();
+            formData.append('import_file', file);
+
+            try {
+                const response = await fetch('{{ route('events.importPreview') }}', {
+                    method: 'POST',
+                    headers: {
+                        'Accept': 'application/json',
+                        'X-Requested-With': 'XMLHttpRequest',
+                        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content'),
+                    },
+                    body: formData,
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.message || 'Import preview failed.');
+                }
+
+                this.start_date = data.start_date || '';
+                this.end_date = data.end_date || '';
+
+                this.generateDays();
+
+                const importedCounts = data.daily_guards || {};
+                for (const day in this.dailyGuardCounts) {
+                    this.dailyGuardCounts[day] = importedCounts[day] ?? 0;
+                }
+                
+                
+                                this.shift_mode = data.shift_mode || 'same';
+                this.globalImportedStart = data.global_start || '';
+                this.globalImportedEnd = data.global_end || '';
+
+                this.shiftModeMessage = this.shift_mode === 'same'
+                    ? `Excel detected same shift for all rows (${this.globalImportedStart || '--'} → ${this.globalImportedEnd || '--'}).`
+                    : 'Excel detected different shifts across rows.';
+                    
+                    
+
+                this.importMessage = `Excel loaded successfully. ${data.row_count} row(s) detected.`;
+                this.importError = false;
+            } catch (error) {
+                console.error(error);
+                this.importMessage = error.message || 'Failed to read Excel file.';
+                this.importError = true;
             }
         },
 
@@ -240,5 +354,8 @@ function eventForm() {
     }
 }
 </script>
+
+
+
 
 @endsection

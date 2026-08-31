@@ -12,7 +12,6 @@ class GuardReportController extends Controller
 {
     public function index()
     {
-        // Dropdown data
         $guards = SecurityGuard::query()
             ->orderBy('fullname')
             ->get(['id', 'fullname']);
@@ -21,15 +20,14 @@ class GuardReportController extends Controller
             ->orderByDesc('start_date')
             ->get(['id', 'event_name', 'start_date', 'end_date']);
 
-        // Recent (guard,event) pairs based on event_shifts
         $recentPairs = EventShift::query()
+            ->whereNull('cancelled_at')
             ->selectRaw('event_id, guard_id, MAX(date) as last_worked_date')
             ->groupBy('event_id', 'guard_id')
             ->orderByDesc('last_worked_date')
             ->limit(30)
             ->get();
 
-        // Hydrate names for UI (avoid guessing column names)
         $guardMap = $guards->keyBy('id');
         $eventMap = $events->keyBy('id');
 
@@ -57,29 +55,20 @@ class GuardReportController extends Controller
         $shifts = EventShift::query()
             ->where('event_id', $event->id)
             ->where('guard_id', $guard->id)
+            ->whereNull('cancelled_at')
             ->orderBy('date')
             ->orderBy('shift_no')
             ->get();
 
-        // Aggregate hours per date (one row per date)
         $rowsByDate = [];
 
         foreach ($shifts as $shift) {
-            if (!$shift->date || !$shift->start_time || !$shift->end_time) {
+            $hours = $this->shiftNetHours($shift);
+
+            if ($hours <= 0) {
                 continue;
             }
 
-            $start = strtotime($shift->start_time);
-            $end   = strtotime($shift->end_time);
-
-            // Overnight shift support
-            if ($end < $start) {
-                $end += 86400;
-            }
-
-            $hours = round(($end - $start) / 3600, 2);
-
-            // ✅ FIX: normalize date to string key
             $dateKey = $shift->date instanceof \Carbon\CarbonInterface
                 ? $shift->date->toDateString()
                 : Carbon::parse($shift->date)->toDateString();
@@ -94,7 +83,6 @@ class GuardReportController extends Controller
             $rowsByDate[$dateKey]['hours'] += $hours;
         }
 
-        // Convert to ordered list
         $rows = collect($rowsByDate)
             ->sortBy('date')
             ->values()
@@ -123,5 +111,24 @@ class GuardReportController extends Controller
             'payRate' => $payRate,
             'totalPay' => $totalPay,
         ]);
+    }
+
+    private function shiftNetHours(EventShift $shift): float
+    {
+        if (!$shift->date || !$shift->start_time || !$shift->end_time) {
+            return 0.0;
+        }
+
+        $start = strtotime((string) $shift->start_time);
+        $end   = strtotime((string) $shift->end_time);
+
+        if ($end < $start) {
+            $end += 86400;
+        }
+
+        $workedHours = ($end - $start) / 3600;
+        $breakHours  = (float) ($shift->break_hours ?? 0);
+
+        return round(max($workedHours - max(0, $breakHours), 0), 2);
     }
 }

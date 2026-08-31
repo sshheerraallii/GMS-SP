@@ -5,11 +5,12 @@ namespace App\Http\Controllers;
 use App\Models\Event;
 use App\Models\Invoice;
 use App\Services\Invoices\GenerateDraftInvoiceForEvent;
+use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Validation\Rule;
 use Illuminate\Support\Facades\Storage;
-use Barryvdh\DomPDF\Facade\Pdf;
+use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 
 class InvoiceController extends Controller
 {
@@ -19,16 +20,28 @@ class InvoiceController extends Controller
     }
 
     /**
-     * List invoices
+     * List invoices (search + paginate)
      */
-    public function index()
+    public function index(Request $request)
     {
-        $invoices = Invoice::query()
-            ->with(['event'])
-            ->latest('id')
-            ->paginate(20);
+        $perPage = max(1, (int) $request->get('per_page', 20));
+        $q = trim((string) $request->get('q', ''));
 
-        return view('invoices.index', compact('invoices'));
+        $invoices = Invoice::query()
+            ->with(['event', 'event.client'])
+            ->when($q !== '', function ($query) use ($q) {
+                $query->whereHas('event', function ($eventQ) use ($q) {
+                    $eventQ->where('event_name', 'like', "%{$q}%")
+                        ->orWhereHas('client', function ($clientQ) use ($q) {
+                            $clientQ->where('name', 'like', "%{$q}%");
+                        });
+                });
+            })
+            ->latest('id')
+            ->paginate($perPage)
+            ->withQueryString();
+
+        return view('invoices.index', compact('invoices', 'q', 'perPage'));
     }
 
     /**
@@ -53,6 +66,11 @@ class InvoiceController extends Controller
 
     /**
      * Update draft invoice (recomputes totals server-side)
+     *
+     * Locked rule for Phase 1A:
+     * - Generated drafts use break-aware net hours from event_shifts
+     * - Manual edits use submitted line hours as the final invoice/commercial value
+     * - Invoice edits do NOT modify operational truth
      */
     public function update(Request $request, Invoice $invoice)
     {
@@ -65,14 +83,17 @@ class InvoiceController extends Controller
             'vat_mode'      => ['required', Rule::in(['VAT', 'NON_VAT'])],
 
             'lines' => ['required', 'array', 'min:1'],
+
+            'lines.*.kind'         => ['nullable', Rule::in(['GUARD', 'EXPENSE'])],
             'lines.*.service_date' => ['required', 'date'],
             'lines.*.description'  => ['required', 'string', 'max:255'],
 
-            // UI submits H:i; DB TIME stores H:i:s -> normalize
-            'lines.*.shift_start'  => ['required', 'date_format:H:i'],
-            'lines.*.shift_end'    => ['required', 'date_format:H:i'],
+            // Kept for invoice line display/reference
+            'lines.*.shift_start'  => ['nullable', 'date_format:H:i'],
+            'lines.*.shift_end'    => ['nullable', 'date_format:H:i'],
 
             'lines.*.quantity'     => ['required', 'integer', 'min:0'],
+            'lines.*.hours'        => ['nullable', 'numeric', 'min:0', 'max:24'],
             'lines.*.rate'         => ['required', 'numeric', 'min:0'],
         ]);
 
@@ -80,20 +101,50 @@ class InvoiceController extends Controller
 
             $vatRate = ($data['vat_mode'] === 'VAT') ? 0.2000 : 0.0000;
 
-            // Replace lines (simple + stable)
             $invoice->lines()->delete();
 
-            $subtotal = 0.0;
+            $subtotal   = 0.0;
             $totalHours = 0.0;
+            $lineNo     = 1;
 
-            $lineNo = 1;
             foreach ($data['lines'] as $l) {
-                $start = $this->normalizeTime($l['shift_start']); // H:i:s
-                $end   = $this->normalizeTime($l['shift_end']);   // H:i:s
+                $kind = strtoupper($l['kind'] ?? 'GUARD');
+                $qty  = (int) $l['quantity'];
+                $rate = (float) $l['rate'];
 
-                $hours = $this->hoursBetween($start, $end);
-                $qty   = (int) $l['quantity'];
-                $rate  = (float) $l['rate'];
+                if ($kind === 'EXPENSE') {
+                    $start = '00:00:00';
+                    $end   = '00:00:00';
+
+                    $amount = round($qty * $rate, 2);
+                    $subtotal += $amount;
+
+                    $invoice->lines()->create([
+                        'line_no'      => $lineNo++,
+                        'service_date' => $l['service_date'],
+                        'description'  => $l['description'],
+                        'shift_start'  => $start,
+                        'shift_end'    => $end,
+                        'quantity'     => $qty,
+                        'hours'        => 0.00,
+                        'rate'         => round($rate, 2),
+                        'amount'       => $amount,
+                    ]);
+
+                    continue;
+                }
+
+                if (empty($l['shift_start']) || empty($l['shift_end'])) {
+                    throw ValidationException::withMessages([
+                        'lines' => ['Guard lines require shift start and end times.'],
+                    ]);
+                }
+
+                $start = $this->normalizeTime($l['shift_start']);
+                $end   = $this->normalizeTime($l['shift_end']);
+
+                // Locked rule: manual invoice edit uses final submitted hours
+                $hours = round(max(0, (float) ($l['hours'] ?? 0)), 2);
 
                 $amount = round($qty * $hours * $rate, 2);
 
@@ -107,7 +158,7 @@ class InvoiceController extends Controller
                     'shift_start'  => $start,
                     'shift_end'    => $end,
                     'quantity'     => $qty,
-                    'hours'        => round($hours, 2),
+                    'hours'        => $hours,
                     'rate'         => round($rate, 2),
                     'amount'       => $amount,
                 ]);
@@ -132,198 +183,136 @@ class InvoiceController extends Controller
     }
 
     /**
-     * Create draft invoice for an event (idempotent)
+     * Create draft invoice for a single event (idempotent)
      */
     public function generateDraftForEvent(Event $event, GenerateDraftInvoiceForEvent $service)
     {
-        $invoice = $service->handle($event);
+        try {
+            $invoice = $service->handle($event);
+
+            return redirect()
+                ->route('invoices.show', $invoice)
+                ->with('success', 'Draft invoice generated.');
+        } catch (ValidationException $e) {
+            return back()->withErrors($e->errors())->withInput();
+        }
+    }
+
+    /**
+     * Issue invoice (locks + stores PDF)
+     */
+    public function issue(Invoice $invoice)
+    {
+        if (!$invoice->isDraft()) {
+            abort(403, 'Only draft invoices can be issued.');
+        }
+
+        $invoice->load(['lines', 'event', 'event.client', 'event.supplier']);
+
+        DB::transaction(function () use ($invoice) {
+            $invoice->update([
+                'status'    => 'issued',
+                'issued_at' => now(),
+            ]);
+
+            $path = $this->generateAndStorePdf($invoice);
+
+            $invoice->update([
+                'pdf_path' => $path,
+            ]);
+        });
 
         return redirect()
             ->route('invoices.show', $invoice)
-            ->with('success', 'Draft invoice generated.');
+            ->with('success', 'Invoice issued and PDF generated.');
     }
 
     /**
-     * Issue invoice (Mini-Step 4)
+     * Render PDF inline
      */
-   
-public function issue(Invoice $invoice)
-{
-    if (!$invoice->isDraft()) {
-        abort(403, 'Only draft invoices can be issued.');
-    }
+    public function pdf(Request $request, Invoice $invoice)
+    {
+        $invoice->load(['lines', 'event', 'event.client', 'event.supplier']);
 
-    $invoice->load(['lines', 'event', 'event.client', 'event.supplier']);
+        $fresh = $request->boolean('fresh');
 
-    DB::transaction(function () use ($invoice) {
+        if (!$fresh && $invoice->pdf_path && Storage::disk('local')->exists($invoice->pdf_path)) {
+            $pdf = Storage::disk('local')->get($invoice->pdf_path);
 
-        // 1) Lock invoice first
-        $invoice->update([
-            'status'    => 'issued',
-            'issued_at' => now(),
-        ]);
-
-        // 2) Generate + store PDF
-        $path = $this->generateAndStorePdf($invoice);
-
-        // 3) Persist path
-        $invoice->update([
-            'pdf_path' => $path,
-        ]);
-    });
-
-    return redirect()
-        ->route('invoices.show', $invoice)
-        ->with('success', 'Invoice issued and PDF generated.');
-}
-
-
-    /**
-     * Render PDF in browser (Mini-Step 4)
-     */
-public function pdf(Request $request, Invoice $invoice)
-{
-    $invoice->load(['lines', 'event', 'event.client', 'event.supplier']);
-
-    $fresh = $request->boolean('fresh'); // /invoices/{id}/pdf?fresh=1
-
-    // Only Admin + Super Admin can force regenerate
-    if ($fresh) {
-        $user = $request->user();
-
-        $allowed = $user
-            && method_exists($user, 'hasAnyRole')
-            && $user->hasAnyRole(['Super Admin', 'Admin']);
-
-        if (!$allowed) {
-            abort(403, 'Not allowed to regenerate PDFs.');
+            return response($pdf, 200, [
+                'Content-Type'        => 'application/pdf',
+                'Content-Disposition' => 'inline; filename="' . $invoice->invoice_number . '.pdf"',
+            ]);
         }
-    }
 
-    // If stored PDF exists and not forcing fresh, stream it
-    if (!$fresh && $invoice->pdf_path && Storage::disk('local')->exists($invoice->pdf_path)) {
-        $pdf = Storage::disk('local')->get($invoice->pdf_path);
+        $pdf = Pdf::loadView('invoices.pdf', ['invoice' => $invoice])->setPaper('a4', 'portrait');
+        $output = $pdf->output();
 
-        return response($pdf, 200, [
+        if ($invoice->status === 'issued') {
+            $path = $this->storePdfBytes($invoice, $output);
+            $invoice->update(['pdf_path' => $path]);
+        }
+
+        return response($output, 200, [
             'Content-Type'        => 'application/pdf',
-            'Content-Disposition' => 'inline; filename="'.$invoice->invoice_number.'.pdf"',
+            'Content-Disposition' => 'inline; filename="' . $invoice->invoice_number . '.pdf"',
         ]);
     }
 
-    // Generate on-the-fly from current invoice DB values
-    $pdf = Pdf::loadView('invoices.pdf', ['invoice' => $invoice])
-        ->setPaper('a4', 'portrait');
-
-    $output = $pdf->output();
-
-    // If issued, store/overwrite PDF (only happens when fresh=1 OR no stored pdf exists)
-    if ($invoice->status === 'issued') {
-        $path = $this->storePdfBytes($invoice, $output);
-        $invoice->update(['pdf_path' => $path]);
-    }
-
-    return response($output, 200, [
-        'Content-Type'        => 'application/pdf',
-        'Content-Disposition' => 'inline; filename="'.$invoice->invoice_number.'.pdf"',
-    ]);
-}
-
-
-
     /**
-     * Download stored PDF (Mini-Step 4)
+     * Download PDF
      */
     public function download(Invoice $invoice)
-{
-    $invoice->load(['lines', 'event', 'event.client', 'event.supplier']);
+    {
+        $invoice->load(['lines', 'event', 'event.client', 'event.supplier']);
 
-    // If stored PDF exists, download it
-    if ($invoice->pdf_path && Storage::disk('local')->exists($invoice->pdf_path)) {
-        return Storage::disk('local')->download(
-            $invoice->pdf_path,
-            $invoice->invoice_number . '.pdf',
-            ['Content-Type' => 'application/pdf']
-        );
+        if ($invoice->pdf_path && Storage::disk('local')->exists($invoice->pdf_path)) {
+            return Storage::disk('local')->download(
+                $invoice->pdf_path,
+                $invoice->invoice_number . '.pdf',
+                ['Content-Type' => 'application/pdf']
+            );
+        }
+
+        $pdf = Pdf::loadView('invoices.pdf', ['invoice' => $invoice])->setPaper('a4', 'portrait');
+        $output = $pdf->output();
+
+        if ($invoice->status === 'issued') {
+            $path = $this->storePdfBytes($invoice, $output);
+            $invoice->update(['pdf_path' => $path]);
+        }
+
+        return response($output, 200, [
+            'Content-Type'        => 'application/pdf',
+            'Content-Disposition' => 'attachment; filename="' . $invoice->invoice_number . '.pdf"',
+        ]);
     }
 
-    // Otherwise generate and download immediately
-    $pdf = Pdf::loadView('invoices.pdf', ['invoice' => $invoice])
-        ->setPaper('a4', 'portrait');
-
-    $output = $pdf->output();
-
-    // Store if issued
-    if ($invoice->status === 'issued') {
-        $path = $this->storePdfBytes($invoice, $output);
-        $invoice->update(['pdf_path' => $path]);
-    }
-
-    return response($output, 200, [
-        'Content-Type'        => 'application/pdf',
-        'Content-Disposition' => 'attachment; filename="'.$invoice->invoice_number.'.pdf"',
-    ]);
-}
-
-    /**
-     * Helpers
-     */
     private function normalizeTime(string $t): string
     {
-        // H:i:s
         if (preg_match('/^\d{2}:\d{2}:\d{2}$/', $t)) {
             return $t;
         }
-
-        // H:i -> H:i:s
         if (preg_match('/^\d{2}:\d{2}$/', $t)) {
             return $t . ':00';
         }
-
         return '00:00:00';
     }
 
-    private function hoursBetween(string $start, string $end): float
-    {
-        $s = $this->toMinutes($start);
-        $e = $this->toMinutes($end);
-
-        if ($e < $s) {
-            $e += 1440; // overnight wrap
-        }
-
-        return max(0, ($e - $s) / 60);
-    }
-
-    private function toMinutes(string $t): int
-    {
-        // accepts H:i or H:i:s
-        $parts = explode(':', $t);
-        $h = (int) ($parts[0] ?? 0);
-        $m = (int) ($parts[1] ?? 0);
-
-        return ($h * 60) + $m;
-    }
-
     private function generateAndStorePdf(Invoice $invoice): string
-{
-    $pdf = Pdf::loadView('invoices.pdf', ['invoice' => $invoice])
-        ->setPaper('a4', 'portrait');
+    {
+        $pdf = Pdf::loadView('invoices.pdf', ['invoice' => $invoice])->setPaper('a4', 'portrait');
+        return $this->storePdfBytes($invoice, $pdf->output());
+    }
 
-    $bytes = $pdf->output();
+    private function storePdfBytes(Invoice $invoice, string $bytes): string
+    {
+        $dir = 'invoices';
+        $filename = $invoice->invoice_number . '.pdf';
+        $path = $dir . '/' . $filename;
 
-    return $this->storePdfBytes($invoice, $bytes);
-}
+        Storage::disk('local')->put($path, $bytes);
 
-private function storePdfBytes(Invoice $invoice, string $bytes): string
-{
-    // Store inside storage/app/invoices/
-    $dir = 'invoices';
-    $filename = $invoice->invoice_number . '.pdf';
-    $path = $dir . '/' . $filename;
-
-    Storage::disk('local')->put($path, $bytes);
-
-    return $path;
-}
-
+        return $path;
+    }
 }

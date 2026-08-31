@@ -11,8 +11,20 @@ class ClientController extends Controller
     public function index(Request $request)
     {
         $perPage = (int) $request->get('per_page', 20);
+        $perPage = in_array($perPage, [10, 20, 30, 40, 50], true) ? $perPage : 20;
 
-        $clients = Client::orderBy('created_at', 'desc')
+        $q = trim((string) $request->get('q', ''));
+
+        $clientsQuery = Client::query()->orderBy('created_at', 'desc');
+
+        if ($q !== '') {
+            $clientsQuery->where(function ($sub) use ($q) {
+                $sub->where('name', 'like', '%' . $q . '%')
+                    ->orWhere('email_address', 'like', '%' . $q . '%');
+            });
+        }
+
+        $clients = $clientsQuery
             ->paginate($perPage)
             ->withQueryString();
 
@@ -33,6 +45,7 @@ class ClientController extends Controller
             'email_address'  => 'required|email|unique:clients,email_address',
             'contact_number' => 'required|string|max:50',
             'payment_terms'  => 'nullable|string|max:255',
+            'color'          => 'nullable|regex:/^#[0-9A-Fa-f]{6}$/',
         ]);
 
         Client::create($data);
@@ -68,6 +81,7 @@ class ClientController extends Controller
             'email_address'  => 'required|email|unique:clients,email_address,' . $client->id,
             'contact_number' => 'required|string|max:50',
             'payment_terms'  => 'nullable|string|max:255',
+            'color'          => 'nullable|regex:/^#[0-9A-Fa-f]{6}$/',
         ]);
 
         $client->update($data);

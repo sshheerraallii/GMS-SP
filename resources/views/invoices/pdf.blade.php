@@ -65,6 +65,15 @@
 
 <body>
 
+@php
+    // Expense lines are stored with sentinel shift 00:00:00 - 00:00:00 (no DB change required)
+    $isExpenseLine = function ($line) {
+        $s = (string)($line->shift_start ?? '');
+        $e = (string)($line->shift_end ?? '');
+        return str_starts_with($s, '00:00') && str_starts_with($e, '00:00');
+    };
+@endphp
+
     {{-- Header --}}
     <div class="header">
         <table class="header-table">
@@ -106,9 +115,10 @@
                     <th style="width:5%;">#</th>
                     <th style="width:12%;">Date</th>
                     <th>Description</th>
+                    <th style="width:10%;">Type</th>
                     <th style="width:15%;">Shift</th>
                     <th style="width:8%;" class="text-right">Qty</th>
-                    <th style="width:10%;" class="text-right">Total Hours</th>
+                    <th style="width:10%;" class="text-right">Line Hours</th>
                     <th style="width:12%;" class="text-right">Rate</th>
                     <th style="width:15%;" class="text-right">Amount</th>
                 </tr>
@@ -116,6 +126,7 @@
 
             <tbody>
                 @foreach($invoice->lines as $line)
+                    @php $isExpense = $isExpenseLine($line); @endphp
                     <tr>
                         <td>{{ $line->line_no }}</td>
 
@@ -126,17 +137,28 @@
                         <td>{{ $line->description }}</td>
 
                         <td>
-                            {{ $line->shift_start ? substr($line->shift_start, 0, 5) : '—' }}
-                            -
-                            {{ $line->shift_end ? substr($line->shift_end, 0, 5) : '—' }}
+                            {{ $isExpense ? 'EXPENSE' : 'GUARD' }}
+                        </td>
+
+                        <td>
+                            @if($isExpense)
+                                —
+                            @else
+                                {{ $line->shift_start ? substr($line->shift_start, 0, 5) : '—' }}
+                                -
+                                {{ $line->shift_end ? substr($line->shift_end, 0, 5) : '—' }}
+                            @endif
                         </td>
 
                         <td class="text-right">{{ (int) $line->quantity }}</td>
 
                         <td class="text-right">
-    {{ number_format(((float)($line->hours ?? 0)) * ((int)($line->quantity ?? 0)), 2) }}
-</td>
-
+                            @if($isExpense)
+                                —
+                            @else
+                                {{ number_format(((float)($line->hours ?? 0)) * ((int)($line->quantity ?? 0)), 2) }}
+                            @endif
+                        </td>
 
                         <td class="text-right">{{ number_format((float)$line->rate, 2) }}</td>
 

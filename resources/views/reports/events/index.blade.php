@@ -35,7 +35,12 @@
                         </td>
 
                         <td class="px-4 py-3">
-                            {{ $event['client_name'] }}
+                            <div class="flex items-center gap-2">
+                                @if(!empty($event['client_color']))
+                                    <span class="inline-block h-3 w-3 shrink-0 rounded-full" style="background: {{ $event['client_color'] }};"></span>
+                                @endif
+                                <span>{{ $event['client_name'] }}</span>
+                            </div>
                         </td>
 
                         <td class="px-4 py-3 text-center">

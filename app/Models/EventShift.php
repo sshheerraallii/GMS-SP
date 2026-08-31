@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use App\Models\SecurityGuard;
 use App\Models\Event;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class EventShift extends Model
 {
@@ -17,12 +18,29 @@ class EventShift extends Model
         'date',
         'start_time',
         'end_time',
+        'break_hours',
+        'location',
+        'site_postcode',
+        'site_name',
+        'site_address',
         'shift_no',
+        'cancelled_at',
     ];
 
     protected $casts = [
         'date' => 'date',
+        'break_hours' => 'decimal:2',
+        'cancelled_at' => 'datetime',
     ];
+
+    /**
+     * Only non-cancelled shifts. Cancelled shifts are omitted from all
+     * billing, pay sheets, timesheets and reports (they count as zero).
+     */
+    public function scopeActive($query)
+    {
+        return $query->whereNull('cancelled_at');
+    }
 
     /**
      * Each shift belongs to an event
@@ -31,6 +49,11 @@ class EventShift extends Model
     {
         return $this->belongsTo(Event::class);
     }
+    
+    public function chaseup(): HasOne
+{
+    return $this->hasOne(\App\Models\Chaseup::class, 'event_shift_id');
+}
 
     /**
      * Each shift belongs to a security guard

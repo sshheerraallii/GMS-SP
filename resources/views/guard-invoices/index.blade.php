@@ -21,19 +21,18 @@
         </div>
     @endif
 
-    {{-- Filters --}}
+    {{-- Search / Filters (minimal) --}}
     <form method="GET" class="bg-white border rounded-lg p-4 mb-6">
         <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
-            <div>
-                <label class="text-xs text-gray-600">Event ID</label>
-                <input type="number" name="event_id" value="{{ request('event_id') }}"
-                       class="w-full mt-1 border rounded px-3 py-2 text-sm">
-            </div>
-
-            <div>
-                <label class="text-xs text-gray-600">Guard ID</label>
-                <input type="number" name="guard_id" value="{{ request('guard_id') }}"
-                       class="w-full mt-1 border rounded px-3 py-2 text-sm">
+            <div class="md:col-span-2">
+                <label class="text-xs text-gray-600">Search</label>
+                <input
+                    type="text"
+                    name="q"
+                    value="{{ request('q') }}"
+                    class="w-full mt-1 border rounded px-3 py-2 text-sm"
+                    placeholder="Event name, Guard name, Invoice #"
+                >
             </div>
 
             <div>
@@ -49,10 +48,14 @@
             </div>
 
             <div>
-                <label class="text-xs text-gray-600">Invoice #</label>
-                <input type="text" name="invoice_number" value="{{ request('invoice_number') }}"
-                       class="w-full mt-1 border rounded px-3 py-2 text-sm"
-                       placeholder="GINV-...">
+                <label class="text-xs text-gray-600">Per page</label>
+                <select name="per_page" class="w-full mt-1 border rounded px-3 py-2 text-sm">
+                    @foreach([10, 20, 50, 100] as $n)
+                        <option value="{{ $n }}" @selected((int)request('per_page', 20) === $n)>
+                            {{ $n }}/page
+                        </option>
+                    @endforeach
+                </select>
             </div>
         </div>
 
@@ -60,6 +63,7 @@
             <button class="px-4 py-2 rounded bg-gray-900 text-white text-sm hover:bg-gray-800" type="submit">
                 Apply
             </button>
+
             <a href="{{ route('guard-invoices.index') }}"
                class="px-4 py-2 rounded bg-gray-100 text-gray-800 text-sm hover:bg-gray-200">
                 Reset
@@ -85,16 +89,19 @@
                 @forelse($guardInvoices as $gi)
                     <tr class="border-t hover:bg-gray-50">
                         <td class="px-4 py-3 font-medium text-gray-900">{{ $gi->invoice_number }}</td>
+
                         <td class="px-4 py-3">
                             <div class="font-medium text-gray-900">{{ $gi->event?->event_name ?? ('Event #'.$gi->event_id) }}</div>
                             <div class="text-xs text-gray-500">Event ID: {{ $gi->event_id }}</div>
                         </td>
+
                         <td class="px-4 py-3">
                             <div class="font-medium text-gray-900">
                                 {{ $gi->securityGuard?->fullname ?? $gi->securityGuard?->full_name ?? $gi->securityGuard?->name ?? ('Guard #'.$gi->guard_id) }}
                             </div>
                             <div class="text-xs text-gray-500">Guard ID: {{ $gi->guard_id }}</div>
                         </td>
+
                         <td class="px-4 py-3">
                             <span class="inline-flex items-center px-2 py-1 rounded text-xs
                                 {{ $gi->status === 'draft' ? 'bg-yellow-100 text-yellow-800' : '' }}
@@ -105,8 +112,10 @@
                                 {{ strtoupper($gi->status) }}
                             </span>
                         </td>
+
                         <td class="px-4 py-3 text-right">{{ number_format((float)$gi->total_hours, 2) }}</td>
                         <td class="px-4 py-3 text-right">{{ number_format((float)$gi->total, 2) }}</td>
+
                         <td class="px-4 py-3 text-right">
                             <a class="text-indigo-700 hover:underline"
                                href="{{ route('guard-invoices.show', $gi->id) }}">
@@ -125,8 +134,24 @@
         </table>
     </div>
 
-    <div class="mt-6">
-        {{ $guardInvoices->links() }}
+    {{-- Pagination --}}
+    <div class="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div class="text-sm text-gray-600">
+            Showing
+            <span class="font-medium">{{ $guardInvoices->firstItem() ?? 0 }}</span>
+            to
+            <span class="font-medium">{{ $guardInvoices->lastItem() ?? 0 }}</span>
+            of
+            <span class="font-medium">{{ $guardInvoices->total() }}</span>
+            results
+            <span class="ml-2 text-gray-500">
+                (Page {{ $guardInvoices->currentPage() }} of {{ $guardInvoices->lastPage() }})
+            </span>
+        </div>
+
+        <div>
+            {{ $guardInvoices->onEachSide(1)->links() }}
+        </div>
     </div>
 
 </div>

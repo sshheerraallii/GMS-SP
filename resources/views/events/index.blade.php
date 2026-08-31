@@ -6,9 +6,33 @@
     <div class="flex flex-col gap-3 md:flex-row md:justify-between md:items-center mb-4">
         <h2 class="text-2xl font-bold">Events List</h2>
 
-        <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
-            {{-- Rows per page --}}
+        <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3 w-full md:w-auto">
+
+            <form method="GET" action="{{ route('events.index') }}" class="flex items-center gap-2 w-full md:w-auto">
+                <input type="hidden" name="per_page" value="{{ (int) request('per_page', 10) }}">
+
+                <input type="text"
+                       name="q"
+                       value="{{ request('q', '') }}"
+                       placeholder="Search: event, client, address"
+                       class="w-full md:w-80 border rounded px-3 py-2 text-sm">
+
+                <button type="submit"
+                        class="bg-gray-900 text-white px-4 py-2 rounded text-sm">
+                    Search
+                </button>
+
+                @if(request()->filled('q'))
+                    <a href="{{ route('events.index', ['per_page' => (int) request('per_page', 10)]) }}"
+                       class="px-3 py-2 rounded border text-sm">
+                        Clear
+                    </a>
+                @endif
+            </form>
+
             <form method="GET" action="{{ route('events.index') }}" class="flex items-center gap-2">
+                <input type="hidden" name="q" value="{{ request('q', '') }}">
+
                 <label class="text-sm text-gray-600">Rows</label>
                 <select name="per_page"
                         onchange="this.form.submit()"
@@ -23,7 +47,7 @@
 
             @can('events.create')
                 <a href="{{ route('events.create') }}"
-                   class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">
+                   class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 whitespace-nowrap">
                     + Create New Event
                 </a>
             @endcan
@@ -49,9 +73,12 @@
                     <th class="border p-2 text-left">Address</th>
                     <th class="border p-2 text-left">Client</th>
                     <th class="border p-2 text-center">Type</th>
+                    @can('view-charge-rate')
                     <th class="border p-2 text-center">Charge</th>
+                    @endcan
                     <th class="border p-2 text-center">Invoice Date</th>
                     <th class="border p-2 text-center">Pay Rate</th>
+                    <th class="border p-2 text-center">Hours</th>
                     <th class="border p-2 text-left">Guards</th>
                     <th class="border p-2 text-left">Client Contact</th>
                     <th class="border p-2 text-center">Actions</th>
@@ -63,27 +90,40 @@
                     <tr class="hover:bg-gray-50">
 
                         <td class="border p-2 font-medium">
-                            {{ $event->event_name }}
-                        </td>
+    <div>{{ $event->event_name }}</div>
+
+    @if($event->start_date)
+        <div class="text-xs text-gray-500">
+            {{ \Carbon\Carbon::parse($event->start_date)->format('d-m-Y') }}
+            ({{ \Carbon\Carbon::parse($event->start_date)->format('l') }})
+        </div>
+    @endif
+</td>
 
                         <td class="border p-2">
                             {{ $event->address }}
                         </td>
 
                         <td class="border p-2">
-                            {{ $event->client->name ?? '-' }}
+                            <div class="flex items-center gap-2">
+                                @if($event->client?->color)
+                                    <span class="inline-block h-3 w-3 shrink-0 rounded-full" style="background: {{ $event->client->color }};"></span>
+                                @endif
+                                <span>{{ $event->client->name ?? '-' }}</span>
+                            </div>
                         </td>
 
-                        <td class="border p-2 text-center:
-                        ">
+                        <td class="border p-2 text-center">
                             <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium border">
                                 {{ $event->client_type === 'VAT' ? 'VAT' : 'Non VAT' }}
                             </span>
                         </td>
 
+                        @can('view-charge-rate')
                         <td class="border p-2 text-center">
-                            {{ $event->charge_rate }}/hr
+                            {{ $event->charge_rate !== null ? $event->charge_rate.'/hr' : 'Not set' }}
                         </td>
+                        @endcan
 
                         <td class="border p-2 text-center">
                             {{ $event->invoice_date }}
@@ -93,7 +133,10 @@
                             {{ $event->pay_rate }}/hr
                         </td>
 
-                        {{-- Guards column --}}
+                        <td class="border p-2 text-center font-medium">
+                            {{ number_format((float) ($event->calculated_total_hours ?? 0), 2) }}
+                        </td>
+
                         <td class="border p-2 align-top">
                             @if($event->guards->count())
                                 <div class="font-medium">
@@ -154,7 +197,7 @@
                     </tr>
                 @empty
                     <tr>
-                        <td colspan="10" class="text-center p-4 text-gray-500">
+                        <td colspan="{{ auth()->user()->can('view-charge-rate') ? 11 : 10 }}" class="text-center p-4 text-gray-500">
                             No events found.
                         </td>
                     </tr>
@@ -163,7 +206,6 @@
         </table>
     </div>
 
-    {{-- Pagination --}}
     <div class="mt-4 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
         <div class="text-sm text-gray-600">
             Showing

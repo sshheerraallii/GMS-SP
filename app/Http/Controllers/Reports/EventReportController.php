@@ -4,10 +4,9 @@ namespace App\Http\Controllers\Reports;
 
 use App\Http\Controllers\Controller;
 use App\Models\Event;
-use Illuminate\Http\Request;
 use App\Models\EventShift;
-use Carbon\Carbon;
 use App\Models\SecurityGuard;
+use Carbon\Carbon;
 
 class EventReportController extends Controller
 {
@@ -19,37 +18,27 @@ class EventReportController extends Controller
             ->get()
             ->map(function ($event) {
 
-                $shiftsQuery = EventShift::where('event_id', $event->id);
+                $shiftsQuery = EventShift::query()->where('event_id', $event->id)->whereNull('cancelled_at');
 
-                $totalShifts = $shiftsQuery->count();
+                $totalShifts = (clone $shiftsQuery)->count();
 
-                $totalHours = $shiftsQuery->get()->sum(function ($shift) {
-                    if (!$shift->start_time || !$shift->end_time) {
-                        return 0;
-                    }
-
-                    $start = strtotime($shift->start_time);
-                    $end   = strtotime($shift->end_time);
-
-                    if ($end < $start) {
-                        $end += 86400; // crosses midnight
-                    }
-
-                    return ($end - $start) / 3600;
+                $totalHours = (clone $shiftsQuery)->get()->sum(function ($shift) {
+                    return $this->shiftNetHours($shift);
                 });
 
                 return [
-                    'id'              => $event->id,
-                    'event_name'      => $event->event_name,
-                    'client_name'     => $event->client->name ?? '—',
-                    'start_date'      => $event->start_date,
-                    'end_date'        => $event->end_date,
-                    'total_days'      => $event->start_date && $event->end_date
+                    'id'           => $event->id,
+                    'event_name'   => $event->event_name,
+                    'client_name'  => $event->client->name ?? '—',
+                    'client_color' => $event->client->color ?? null,
+                    'start_date'   => $event->start_date,
+                    'end_date'     => $event->end_date,
+                    'total_days'   => $event->start_date && $event->end_date
                         ? Carbon::parse($event->start_date)->diffInDays(Carbon::parse($event->end_date)) + 1
                         : 0,
-                    'total_guards'    => $shiftsQuery->distinct('guard_id')->count('guard_id'),
-                    'total_shifts'    => $totalShifts,
-                    'total_hours'     => round($totalHours, 2),
+                    'total_guards' => (clone $shiftsQuery)->distinct('guard_id')->count('guard_id'),
+                    'total_shifts' => $totalShifts,
+                    'total_hours'  => round($totalHours, 2),
                 ];
             });
 
@@ -58,73 +47,58 @@ class EventReportController extends Controller
 
     public function show(Event $event)
     {
-        $shifts = EventShift::where('event_id', $event->id)->get();
+        $shifts = EventShift::query()
+            ->where('event_id', $event->id)
+            ->whereNull('cancelled_at')
+            ->get();
 
         $totalShifts = $shifts->count();
 
         $totalHours = $shifts->sum(function ($shift) {
-            if (!$shift->start_time || !$shift->end_time) {
-                return 0;
-            }
-
-            $start = strtotime($shift->start_time);
-            $end   = strtotime($shift->end_time);
-
-            if ($end < $start) {
-                $end += 86400; // overnight shift
-            }
-
-            return ($end - $start) / 3600;
+            return $this->shiftNetHours($shift);
         });
 
         $totalDays = ($event->start_date && $event->end_date)
             ? Carbon::parse($event->start_date)->diffInDays(Carbon::parse($event->end_date)) + 1
             : 0;
 
-        $totalGuards = $shifts->pluck('guard_id')->unique()->count();
+        $totalGuards = $shifts->pluck('guard_id')->filter()->unique()->count();
 
         return view('reports.events.show', [
-            'event'        => $event,
-            'totalDays'    => $totalDays,
-            'totalGuards'  => $totalGuards,
-            'totalShifts'  => $totalShifts,
-            'totalHours'   => round($totalHours, 2),
+            'event'       => $event,
+            'totalDays'   => $totalDays,
+            'totalGuards' => $totalGuards,
+            'totalShifts' => $totalShifts,
+            'totalHours'  => round($totalHours, 2),
         ]);
     }
 
     public function detailed(Event $event)
     {
-        $shifts = EventShift::where('event_id', $event->id)
+        $shifts = EventShift::query()
+            ->where('event_id', $event->id)
+            ->whereNull('cancelled_at')
             ->orderBy('date')
             ->get();
 
-        // Preload guards once (keeps same output, avoids N+1)
         $guardIds = $shifts->pluck('guard_id')->filter()->unique()->values();
-        $guardsById = SecurityGuard::whereIn('id', $guardIds)->get()->keyBy('id');
+        $guardsById = SecurityGuard::query()
+            ->whereIn('id', $guardIds)
+            ->get()
+            ->keyBy('id');
 
         $days = [];
-        $eventTotalHours = 0;
+        $eventTotalHours = 0.0;
         $uniqueGuards = [];
 
         foreach ($shifts as $shift) {
+            $hours = $this->shiftNetHours($shift);
 
-            if (!$shift->start_time || !$shift->end_time) {
+            if ($hours <= 0) {
                 continue;
             }
 
-            $start = strtotime($shift->start_time);
-            $end   = strtotime($shift->end_time);
-
-            // Handle overnight shifts
-            if ($end < $start) {
-                $end += 86400;
-            }
-
-            $hours = round(($end - $start) / 3600, 2);
-
-            // ✅ FIX: normalize date to a string array key
             if (empty($shift->date)) {
-                // if date is missing, skip (prevents bad keys)
                 continue;
             }
 
@@ -135,7 +109,9 @@ class EventReportController extends Controller
             $guard = $guardsById->get($shift->guard_id);
             $guardName = $guard?->fullname ?? '—';
 
-            $uniqueGuards[$shift->guard_id] = true;
+            if ($shift->guard_id) {
+                $uniqueGuards[$shift->guard_id] = true;
+            }
 
             if (!isset($days[$dateKey])) {
                 $days[$dateKey] = [
@@ -154,24 +130,47 @@ class EventReportController extends Controller
             }
 
             $days[$dateKey]['rows'][$shift->guard_id]['hours'] += $hours;
-            $days[$dateKey]['rows'][$shift->guard_id]['charge'] =
-                round($days[$dateKey]['rows'][$shift->guard_id]['hours'] * $event->charge_rate, 2);
+            $days[$dateKey]['rows'][$shift->guard_id]['charge'] = round(
+                $days[$dateKey]['rows'][$shift->guard_id]['hours'] * (float) $event->charge_rate,
+                2
+            );
 
             $days[$dateKey]['total_hours'] += $hours;
-            $days[$dateKey]['total_charge'] =
-                round($days[$dateKey]['total_hours'] * $event->charge_rate, 2);
+            $days[$dateKey]['total_charge'] = round(
+                $days[$dateKey]['total_hours'] * (float) $event->charge_rate,
+                2
+            );
 
             $eventTotalHours += $hours;
         }
 
-        $eventTotalCharge = round($eventTotalHours * $event->charge_rate, 2);
+        $eventTotalCharge = round($eventTotalHours * (float) $event->charge_rate, 2);
 
         return view('reports.events.detailed', [
-            'event' => $event,
-            'days' => $days,
-            'eventTotalHours' => round($eventTotalHours, 2),
+            'event'            => $event,
+            'days'             => $days,
+            'eventTotalHours'  => round($eventTotalHours, 2),
             'eventTotalCharge' => $eventTotalCharge,
-            'totalGuards' => count($uniqueGuards),
+            'totalGuards'      => count($uniqueGuards),
         ]);
+    }
+
+    private function shiftNetHours(EventShift $shift): float
+    {
+        if (!$shift->start_time || !$shift->end_time) {
+            return 0.0;
+        }
+
+        $start = strtotime((string) $shift->start_time);
+        $end   = strtotime((string) $shift->end_time);
+
+        if ($end < $start) {
+            $end += 86400;
+        }
+
+        $workedHours = ($end - $start) / 3600;
+        $breakHours = (float) ($shift->break_hours ?? 0);
+
+        return round(max($workedHours - max(0, $breakHours), 0), 2);
     }
 }

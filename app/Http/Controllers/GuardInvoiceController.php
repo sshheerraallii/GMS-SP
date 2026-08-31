@@ -8,37 +8,83 @@ use App\Services\GuardInvoices\GenerateDraftGuardInvoicesForEvent;
 use Illuminate\Http\Request;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Schema;
 
 class GuardInvoiceController extends Controller
 {
-    public function index(Request $request)
-    {
-        $this->authorize('manage-invoices');
+   public function index(Request $request)
+{
+    $this->authorize('manage-invoices');
 
-        $q = GuardInvoice::query()
-            ->with(['event', 'securityGuard'])
-            ->latest('id');
+    $perPage = max(1, min((int) $request->get('per_page', 20), 100));
+    $qText = trim((string) $request->get('q', ''));
 
-        if ($request->filled('event_id')) {
-            $q->where('event_id', $request->integer('event_id'));
-        }
-
-        if ($request->filled('guard_id')) {
-            $q->where('guard_id', $request->integer('guard_id'));
-        }
-
-        if ($request->filled('status')) {
-            $q->where('status', $request->status);
-        }
-
-        if ($request->filled('invoice_number')) {
-            $q->where('invoice_number', 'like', '%' . $request->invoice_number . '%');
-        }
-
-        $guardInvoices = $q->paginate(20)->withQueryString();
-
-        return view('guard-invoices.index', compact('guardInvoices'));
+    // Determine real column names safely (no guessing)
+    $eventNameCol = null;
+    if (Schema::hasColumn('events', 'event_name')) {
+        $eventNameCol = 'event_name';
+    } elseif (Schema::hasColumn('events', 'name')) {
+        $eventNameCol = 'name';
     }
+
+    $guardNameCol = null;
+    if (Schema::hasColumn('security_guards', 'fullname')) {
+        $guardNameCol = 'fullname';
+    } elseif (Schema::hasColumn('security_guards', 'full_name')) {
+        $guardNameCol = 'full_name';
+    } elseif (Schema::hasColumn('security_guards', 'name')) {
+        $guardNameCol = 'name';
+    }
+
+    $q = GuardInvoice::query()
+        ->with(['event', 'securityGuard'])
+        ->latest('id');
+
+    // Existing exact filters (safe)
+    if ($request->filled('event_id')) {
+        $q->where('event_id', $request->integer('event_id'));
+    }
+
+    if ($request->filled('guard_id')) {
+        $q->where('guard_id', $request->integer('guard_id'));
+    }
+
+    if ($request->filled('status')) {
+        $q->where('status', (string) $request->get('status'));
+    }
+
+    if ($request->filled('invoice_number')) {
+        $q->where('invoice_number', 'like', '%' . (string) $request->get('invoice_number') . '%');
+    }
+
+    // DB-level search (only against columns that exist)
+    if ($qText !== '') {
+        $q->where(function ($outer) use ($qText, $eventNameCol, $guardNameCol) {
+
+            // Always safe: invoice_number
+            $outer->where('invoice_number', 'like', "%{$qText}%");
+
+            // Event name search (only if we found a valid column)
+            if ($eventNameCol) {
+                $outer->orWhereHas('event', function ($eventQ) use ($qText, $eventNameCol) {
+                    $eventQ->where($eventNameCol, 'like', "%{$qText}%");
+                });
+            }
+
+            // Guard name search (only if we found a valid column)
+            if ($guardNameCol) {
+                $outer->orWhereHas('securityGuard', function ($guardQ) use ($qText, $guardNameCol) {
+                    $guardQ->where($guardNameCol, 'like', "%{$qText}%");
+                });
+            }
+        });
+    }
+
+    $guardInvoices = $q->paginate($perPage)->withQueryString();
+
+    return view('guard-invoices.index', compact('guardInvoices'));
+}
+
 
     public function show(GuardInvoice $guardInvoice)
     {
@@ -97,13 +143,12 @@ class GuardInvoiceController extends Controller
 
         $guardInvoice->load('lines');
 
-        // Update lines + recompute
         $totalHours = 0.0;
         $subtotal = 0.0;
 
         foreach ($guardInvoice->lines as $line) {
             if (!isset($data['lines'][$line->id])) {
-                continue; // ignore missing
+                continue;
             }
 
             $row = $data['lines'][$line->id];
@@ -129,7 +174,7 @@ class GuardInvoiceController extends Controller
         $guardInvoice->update([
             'total_hours' => $this->fmt2($totalHours),
             'subtotal'    => $this->fmt2($subtotal),
-            'total'       => $this->fmt2($subtotal), // VAT 0 for guard invoices
+            'total'       => $this->fmt2($subtotal),
         ]);
 
         return redirect()
@@ -149,7 +194,6 @@ class GuardInvoiceController extends Controller
 
         $guardInvoice->load(['event', 'securityGuard', 'lines']);
 
-        // Generate & store PDF
         $pdf = Pdf::loadView('guard-invoices.pdf', [
             'guardInvoice' => $guardInvoice,
         ]);
@@ -160,9 +204,9 @@ class GuardInvoiceController extends Controller
         Storage::disk('local')->put($path, $pdf->output());
 
         $guardInvoice->update([
-            'status'   => 'issued',
-            'issued_at'=> now(),
-            'pdf_path' => $path,
+            'status'    => 'issued',
+            'issued_at' => now(),
+            'pdf_path'  => $path,
         ]);
 
         return redirect()
@@ -176,7 +220,6 @@ class GuardInvoiceController extends Controller
 
         $guardInvoice->load(['event', 'securityGuard', 'lines']);
 
-        // If stored PDF exists, stream it. Otherwise generate on the fly.
         if ($guardInvoice->pdf_path && Storage::disk('local')->exists($guardInvoice->pdf_path)) {
             return response()->file(storage_path('app/' . $guardInvoice->pdf_path));
         }
@@ -201,7 +244,6 @@ class GuardInvoiceController extends Controller
             );
         }
 
-        // Generate download on the fly if not stored
         $pdf = Pdf::loadView('guard-invoices.pdf', [
             'guardInvoice' => $guardInvoice,
         ]);
@@ -229,7 +271,6 @@ class GuardInvoiceController extends Controller
             ->with('success', 'Guard invoice marked as paid.');
     }
 
-    /** helper */
     private function fmt2(float $v): float
     {
         return (float) number_format($v, 2, '.', '');
