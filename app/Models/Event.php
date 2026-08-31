@@ -10,6 +10,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use App\Models\Supplier;
 use App\Models\Concerns\Auditable;
 use App\Models\Invoice;
+use App\Models\SecurityGuard;
 
 class Event extends Model
 {
@@ -21,8 +22,12 @@ class Event extends Model
         'client_id',
         'client_type',
         'charge_rate',
+        'charge_rate_sia',
+        'charge_rate_steward',
         'invoice_date',
         'pay_rate',
+        'pay_rate_sia',
+        'pay_rate_steward',
         'instructions',
         'client_contact',
         'start_date',
@@ -38,6 +43,56 @@ class Event extends Model
         'end_date'     => 'date',
         'daily_guards' => 'array',
     ];
+
+    /**
+     * V3-P3: single source of truth for rate resolution.
+     *
+     *   category rate if set  ->  else base rate if set  ->  else 0
+     *
+     * $kind is 'pay' or 'charge'. $category is a value from
+     * security_guards.category ('SIA' | 'Steward'); NULL, empty or any
+     * unrecognised value falls through to the base rate, which is what
+     * keeps every pre-V3 event billing exactly as it does today.
+     *
+     * Every consumer (invoice generators, reports, executive, exports)
+     * must call this rather than reading the columns directly, so the
+     * fallback logic exists in one place only.
+     */
+    public function rateFor(?string $category, string $kind): float
+    {
+        $kind = strtolower(trim($kind));
+
+        if (!in_array($kind, ['pay', 'charge'], true)) {
+            throw new \InvalidArgumentException("Event::rateFor() \$kind must be 'pay' or 'charge', got '{$kind}'.");
+        }
+
+        $suffix = match (strtolower(trim((string) $category))) {
+            'sia'     => 'sia',
+            'steward' => 'steward',
+            default   => null,
+        };
+
+        if ($suffix !== null) {
+            $categoryRate = $this->{$kind . '_rate_' . $suffix};
+
+            if ($categoryRate !== null && $categoryRate !== '') {
+                return (float) $categoryRate;
+            }
+        }
+
+        $baseRate = $this->{$kind . '_rate'};
+
+        return ($baseRate !== null && $baseRate !== '') ? (float) $baseRate : 0.0;
+    }
+
+    /**
+     * Convenience wrapper for callers that hold a guard rather than a
+     * category string. A missing guard resolves to the base rate.
+     */
+    public function rateForGuard(?SecurityGuard $guard, string $kind): float
+    {
+        return $this->rateFor($guard?->category, $kind);
+    }
 
     public function client()
     {
