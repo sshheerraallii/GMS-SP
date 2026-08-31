@@ -6,6 +6,7 @@ use App\Models\Client;
 use App\Models\Event;
 use App\Models\EventExpense;
 use App\Models\EventShift;
+use App\Models\SecurityGuard;
 use Illuminate\Http\Request;
 
 class ExecutiveController extends Controller
@@ -108,6 +109,14 @@ class ExecutiveController extends Controller
         }
         $events = $eventsQuery->orderBy('event_name')->get();
 
+        /*
+         * V3-P3: guard categories drive rate resolution. Loaded once for
+         * the whole page. withTrashed() because a soft-deleted guard's
+         * historic shifts still carry hours that must be valued at that
+         * guard's category rate.
+         */
+        $guardCategories = SecurityGuard::withTrashed()->pluck('category', 'id');
+
         $rows = [];
         $tHours = 0.0;
         $tPay = 0.0;
@@ -127,15 +136,29 @@ class ExecutiveController extends Controller
                 continue;
             }
 
-            $hours = 0.0;
+            /*
+             * V3-P3: pay and charge are accumulated PER SHIFT at that
+             * guard's resolved rate. The previous `total_hours * rate`
+             * shortcut is invalid once SIA and Steward rates differ.
+             * With no category rates set every shift resolves to the base
+             * rate, so the total is arithmetically identical to before.
+             */
+            $hours  = 0.0;
+            $pay    = 0.0;
+            $charge = 0.0;
+
             foreach ($shifts as $shift) {
-                $hours += $this->shiftNetHours($shift);
+                $shiftHours = $this->shiftNetHours($shift);
+                $category   = $guardCategories[$shift->guard_id] ?? null;
+
+                $hours  += $shiftHours;
+                $pay    += $shiftHours * $event->rateFor($category, 'pay');
+                $charge += $shiftHours * $event->rateFor($category, 'charge');
             }
 
-            $payRate    = (float) ($event->pay_rate ?? 0);
-            $chargeRate = (float) ($event->charge_rate ?? 0);
-            $pay    = round($hours * $payRate, 2);
-            $charge = round($hours * $chargeRate, 2);
+            $payRate = (float) ($event->pay_rate ?? 0);
+            $pay     = round($pay, 2);
+            $charge  = round($charge, 2);
 
             // Expenses dated within the range, plus any without a date.
             $expenses = $event->expenses

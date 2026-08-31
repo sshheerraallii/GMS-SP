@@ -130,21 +130,34 @@ class EventReportController extends Controller
             }
 
             $days[$dateKey]['rows'][$shift->guard_id]['hours'] += $hours;
+
+            /*
+             * V3-P3: each guard row is valued at that guard's resolved
+             * charge rate (SIA / Steward, falling back to the event's base
+             * rate). Day and event totals are then SUMS of those rows —
+             * the old `total_hours * charge_rate` shortcut is invalid once
+             * the two categories are charged differently.
+             */
             $days[$dateKey]['rows'][$shift->guard_id]['charge'] = round(
-                $days[$dateKey]['rows'][$shift->guard_id]['hours'] * (float) $event->charge_rate,
+                $days[$dateKey]['rows'][$shift->guard_id]['hours']
+                    * $event->rateForGuard($guard, 'charge'),
                 2
             );
 
             $days[$dateKey]['total_hours'] += $hours;
-            $days[$dateKey]['total_charge'] = round(
-                $days[$dateKey]['total_hours'] * (float) $event->charge_rate,
-                2
-            );
 
             $eventTotalHours += $hours;
         }
 
-        $eventTotalCharge = round($eventTotalHours * (float) $event->charge_rate, 2);
+        // Totals rebuilt from the per-guard rows (see note above).
+        foreach ($days as $dateKey => $day) {
+            $days[$dateKey]['total_charge'] = round(
+                array_sum(array_column($day['rows'], 'charge')),
+                2
+            );
+        }
+
+        $eventTotalCharge = round(array_sum(array_column($days, 'total_charge')), 2);
 
         return view('reports.events.detailed', [
             'event'            => $event,

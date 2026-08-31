@@ -24,8 +24,6 @@ class EventStaffPaymentSheetExport implements FromCollection, WithHeadings, Shou
 
     public function collection(): Collection
     {
-        $rate = $this->event->pay_rate;
-
         $rows = EventShift::query()
             ->from('event_shifts as es')
             ->join('security_guards as sg', 'sg.id', '=', 'es.guard_id')
@@ -36,6 +34,7 @@ class EventStaffPaymentSheetExport implements FromCollection, WithHeadings, Shou
                 'sg.fullname',
                 'sg.sort_code',
                 'sg.account_number',
+                'sg.category',
                 DB::raw("
                     SUM(
                         GREATEST(
@@ -55,20 +54,27 @@ class EventStaffPaymentSheetExport implements FromCollection, WithHeadings, Shou
                     ) AS total_hours
                 "),
             ])
-            ->groupBy('es.guard_id', 'sg.fullname', 'sg.sort_code', 'sg.account_number')
+            ->groupBy('es.guard_id', 'sg.fullname', 'sg.sort_code', 'sg.account_number', 'sg.category')
             ->orderBy('sg.fullname')
             ->get();
 
-        return $rows->map(function ($row) use ($rate) {
+        return $rows->map(function ($row) {
             $totalHours = $row->total_hours !== null ? round((float) $row->total_hours, 2) : 0;
-            $numericRate = is_null($rate) ? null : (float) $rate;
-            $totalPay = is_null($numericRate) ? null : round($totalHours * $numericRate, 2);
+
+            /*
+             * V3-P3: rate resolves per guard from their category
+             * (SIA / Steward), falling back to the event's base pay_rate.
+             * Resolution always yields a number, so the previous
+             * "rate not set" null path no longer arises here.
+             */
+            $numericRate = $this->event->rateFor($row->category, 'pay');
+            $totalPay = round($totalHours * $numericRate, 2);
 
             $out = [
                 'Name'        => $row->fullname ?? '',
                 'Total Hours' => number_format($totalHours, 2, '.', ''),
-                'Rate'        => is_null($numericRate) ? '' : number_format($numericRate, 2, '.', ''),
-                'Total Pay'   => is_null($totalPay) ? '' : number_format($totalPay, 2, '.', ''),
+                'Rate'        => number_format($numericRate, 2, '.', ''),
+                'Total Pay'   => number_format($totalPay, 2, '.', ''),
             ];
 
             if ($this->reduced) {

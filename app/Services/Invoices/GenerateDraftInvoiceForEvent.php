@@ -136,7 +136,7 @@ class GenerateDraftInvoiceForEvent
              * V3-P3: guard categories drive the charge rate. Fetched once
              * for every guard on the event rather than per shift.
              */
-            $guardCategories = SecurityGuard::query()
+            $guardCategories = SecurityGuard::withTrashed()
                 ->whereIn('id', $shifts->pluck('guard_id')->filter()->unique()->all())
                 ->pluck('category', 'id');
 

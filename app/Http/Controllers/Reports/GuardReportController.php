@@ -86,8 +86,9 @@ class GuardReportController extends Controller
         $rows = collect($rowsByDate)
             ->sortBy('date')
             ->values()
-            ->map(function ($r) use ($event) {
-                $payRate = (float) $event->pay_rate;
+            ->map(function ($r) use ($event, $guard) {
+                // V3-P3: pay rate resolves from this guard's category.
+                $payRate = $event->rateForGuard($guard, 'pay');
                 $hours   = round((float) $r['hours'], 2);
                 $total   = round($hours * $payRate, 2);
 
@@ -100,7 +101,7 @@ class GuardReportController extends Controller
             });
 
         $totalHours = round($rows->sum('hours'), 2);
-        $payRate    = round((float) $event->pay_rate, 2);
+        $payRate    = round($event->rateForGuard($guard, 'pay'), 2);
         $totalPay   = round($totalHours * $payRate, 2);
 
         return view('reports.guards.show', [

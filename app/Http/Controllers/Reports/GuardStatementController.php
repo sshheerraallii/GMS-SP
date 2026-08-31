@@ -75,7 +75,8 @@ class GuardStatementController extends Controller
         foreach ($shifts as $shift) {
             $event = $shift->event;
             $eid   = $event?->id ?? 0;
-            $rate  = (float) ($event?->pay_rate ?? 0);
+            // V3-P3: each event valued at this guard's category pay rate.
+            $rate  = $event ? $event->rateForGuard($guard, 'pay') : 0.0;
             $hours = $this->shiftNetHours($shift);
             $amount = round($hours * $rate, 2);
 
