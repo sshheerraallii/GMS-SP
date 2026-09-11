@@ -427,6 +427,67 @@
         });
     })();
     </script>
+
+    {{-- V3-P5: staff pay-date reminders. Same architecture as the shift
+         poller above (client-side, no cron), with its own endpoint and its
+         own localStorage key so the two never collide. Fires the day
+         before; the server stops feeding an event once every guard on it
+         is marked paid. --}}
+    <script>
+    (function () {
+        const ENDPOINT  = "{{ route('chaseup.payDateReminders') }}";
+        const POLL_MS   = 300000;   // 5 min — this is a date-level signal, not minute-level
+        const STORE_KEY = 'gms_paydate_reminders_shown';
+
+        function loadShown() {
+            try { return new Set(JSON.parse(localStorage.getItem(STORE_KEY) || '[]')); }
+            catch (e) { return new Set(); }
+        }
+        function saveShown(set) {
+            try { localStorage.setItem(STORE_KEY, JSON.stringify([].concat([...set]).slice(-200))); } catch (e) {}
+        }
+
+        function showToast(r) {
+            const wrap = document.getElementById('shiftReminderToasts');
+            if (!wrap) return;
+            const el = document.createElement('div');
+            el.className = 'rounded-lg border border-blue-300 bg-blue-50 p-3 text-sm text-gray-800 shadow-lg';
+            let html = '<div class="flex items-start justify-between gap-2"><div>';
+            html += '<div class="font-semibold text-blue-800">Staff pay due tomorrow</div>';
+            html += '<div class="mt-0.5 font-medium">' + (r.event_name || 'Event') + '</div>';
+            html += '<div class="mt-0.5 text-xs text-gray-600">' + r.guards_due + ' of ' + r.guards_total + ' guards still unpaid</div>';
+            html += '<div class="text-xs text-gray-600">Pay date ' + r.pay_date + '</div>';
+            if (r.url) html += '<a href="' + r.url + '" class="mt-1 inline-block text-xs font-semibold text-blue-700 underline">Open pay sheet</a>';
+            html += '</div><button type="button" class="text-lg leading-none text-gray-400 hover:text-gray-700">&times;</button></div>';
+            el.innerHTML = html;
+            el.querySelector('button').addEventListener('click', function () { el.remove(); });
+            wrap.appendChild(el);
+            setTimeout(function () { el.remove(); }, 120000);
+        }
+
+        async function pollPayDates() {
+            let data;
+            try {
+                const res = await fetch(ENDPOINT, { headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' } });
+                if (!res.ok) return;
+                data = await res.json();
+            } catch (e) { return; }
+
+            const shown = loadShown();
+            (data.reminders || []).forEach(function (r) {
+                if (!r.key || shown.has(r.key)) return;
+                showToast(r);
+                shown.add(r.key);
+            });
+            saveShown(shown);
+        }
+
+        document.addEventListener('DOMContentLoaded', function () {
+            pollPayDates();
+            setInterval(pollPayDates, POLL_MS);
+        });
+    })();
+    </script>
     @endauth
 
 </body>

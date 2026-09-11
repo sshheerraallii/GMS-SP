@@ -157,6 +157,17 @@
                    class="w-full border rounded px-3 py-2">
         </div>
 
+        {{-- STAFF PAY DATE (V3-P5) --}}
+        <div>
+            <label class="block font-medium mb-1">Staff Pay Date</label>
+            <input type="date" name="staff_pay_date"
+                   value="{{ old('staff_pay_date') }}"
+                   class="w-full border rounded px-3 py-2">
+            <p class="mt-1 text-xs text-gray-400">
+                A reminder pops up the day before, and stops once every guard on this event is marked paid.
+            </p>
+        </div>
+
         {{-- PAY RATE --}}
         <div>
             <label class="block font-medium mb-1">Pay Rate / Hour</label>

@@ -25,6 +25,7 @@ class Event extends Model
         'charge_rate_sia',
         'charge_rate_steward',
         'invoice_date',
+        'staff_pay_date',
         'pay_rate',
         'pay_rate_sia',
         'pay_rate_steward',

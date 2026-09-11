@@ -101,6 +101,87 @@ class EventGuardPaymentController extends Controller
             ->with('success', $message);
     }
 
+    /**
+     * V3-P5: read-only JSON feed of events whose staff pay date is
+     * TOMORROW and which are not yet fully paid.
+     *
+     * Same architecture as the existing shift reminders: polled
+     * client-side, no cron, no new table. An event drops out of the feed
+     * once every guard with shifts on it has a paid_on recorded.
+     *
+     * Available to anyone logged in (confirmed decision).
+     */
+    public function payDateReminders()
+    {
+        $tomorrow = now('Europe/London')->addDay()->toDateString();
+
+        $events = Event::query()
+            ->whereNotNull('staff_pay_date')
+            ->whereDate('staff_pay_date', $tomorrow)
+            ->get(['id', 'event_name', 'staff_pay_date']);
+
+        if ($events->isEmpty()) {
+            return response()->json(['reminders' => []]);
+        }
+
+        $eventIds = $events->pluck('id')->all();
+
+        // Guards actually working each event (cancelled shifts excluded).
+        $guardsByEvent = DB::table('event_shifts')
+            ->whereIn('event_id', $eventIds)
+            ->whereNull('cancelled_at')
+            ->whereNotNull('guard_id')
+            ->select('event_id', 'guard_id')
+            ->distinct()
+            ->get()
+            ->groupBy('event_id');
+
+        // Guards already marked paid on those events.
+        $paidByEvent = DB::table('event_guard_payments')
+            ->whereIn('event_id', $eventIds)
+            ->whereNotNull('paid_on')
+            ->select('event_id', 'guard_id')
+            ->distinct()
+            ->get()
+            ->groupBy('event_id');
+
+        $reminders = [];
+
+        foreach ($events as $event) {
+            $guardIds = ($guardsByEvent[$event->id] ?? collect())
+                ->pluck('guard_id')->map(fn ($id) => (int) $id)->unique();
+
+            // No guards on the event: nothing to pay, nothing to remind about.
+            if ($guardIds->isEmpty()) {
+                continue;
+            }
+
+            $paidIds = ($paidByEvent[$event->id] ?? collect())
+                ->pluck('guard_id')->map(fn ($id) => (int) $id)->unique();
+
+            $outstanding = $guardIds->diff($paidIds);
+
+            if ($outstanding->isEmpty()) {
+                continue; // fully paid — suppressed
+            }
+
+            $payDate = optional($event->staff_pay_date)->format('Y-m-d')
+                ?? (string) $event->staff_pay_date;
+
+            $reminders[] = [
+                'key'          => 'paydate|' . $event->id . '|' . $payDate,
+                'event_id'     => $event->id,
+                'event_name'   => $event->event_name,
+                'pay_date'     => $payDate,
+                'guards_total' => $guardIds->count(),
+                'guards_due'   => $outstanding->count(),
+                'url'          => route('events.guardPayments.index', $event->id),
+            ];
+        }
+
+        return response()->json(['reminders' => $reminders]);
+    }
+
     public function export(Event $event)
     {
         $name = Str::slug($event->event_name ?: 'event') . '-guard-payments.xlsx';

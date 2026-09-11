@@ -77,6 +77,7 @@
                     <th class="border p-2 text-center">Charge</th>
                     @endcan
                     <th class="border p-2 text-center">Invoice Date</th>
+                    <th class="border p-2 text-center">Staff Pay Date</th>
                     <th class="border p-2 text-center">Pay Rate</th>
                     <th class="border p-2 text-center">Hours</th>
                     <th class="border p-2 text-left">Guards</th>
@@ -127,6 +128,10 @@
 
                         <td class="border p-2 text-center">
                             {{ $event->invoice_date }}
+                        </td>
+
+                        <td class="border p-2 text-center">
+                            {{ $event->staff_pay_date ? \Carbon\Carbon::parse($event->staff_pay_date)->format('Y-m-d') : '-' }}
                         </td>
 
                         <td class="border p-2 text-center">

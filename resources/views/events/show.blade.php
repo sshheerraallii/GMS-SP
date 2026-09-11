@@ -170,6 +170,13 @@
                 </div>
             </div>
 
+            <div class="bg-gray-50 border rounded p-3">
+                <div class="text-gray-500">Staff Pay Date</div>
+                <div class="font-medium text-gray-900">
+                    {{ $event->staff_pay_date ? \Carbon\Carbon::parse($event->staff_pay_date)->format('d M Y') : '-' }}
+                </div>
+            </div>
+
             <div class="bg-gray-50 border rounded p-3 lg:col-span-2">
                 <div class="text-gray-500">Address</div>
                 <div class="font-medium text-gray-900 break-words">{{ $event->address ?? '-' }}</div>

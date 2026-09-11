@@ -411,6 +411,10 @@ Route::post('/{event}/additional-days-import', [EventController::class, 'importA
     Route::prefix('chaseup')->name('chaseup.')->group(function () {
         Route::get('/', [ChaseupController::class, 'index'])->name('index');
         Route::get('/reminders', [ChaseupController::class, 'reminders'])->name('reminders');
+        // V3-P5: staff pay-date reminders. Sits beside the shift reminder
+        // feed and is likewise available to anyone logged in.
+        Route::get('/pay-date-reminders', [EventGuardPaymentController::class, 'payDateReminders'])
+            ->name('payDateReminders');
         Route::post('/shift/{eventShift}/field', [ChaseupController::class, 'updateField'])
             ->whereNumber('eventShift')
             ->name('updateField');
