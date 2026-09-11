@@ -45,34 +45,6 @@
                                 </button>
                             </form>
 
-                            <a href="{{ route('events.staffSheet', $event->id) }}"
-                               class="inline-flex items-center justify-center rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition duration-150 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-300">
-                                Download Staff Sheet
-                            </a>
-
-                            <a href="{{ route('events.staffPaymentSheet', $event->id) }}"
-                               class="inline-flex items-center justify-center rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition duration-150 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-300">
-                                Download Staff Payment Sheet
-                            </a>
-
-                            <a href="{{ route('events.staffPaymentSheetReduced', $event->id) }}"
-                               class="inline-flex items-center justify-center rounded-lg border border-blue-600 bg-white px-4 py-2.5 text-sm font-semibold text-blue-700 shadow-sm transition duration-150 hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-300">
-                                Payment Sheet (No Bank Details)
-                            </a>
-                            
-                            
-                            <a href="{{ route('events.timeSheet', $event->id) }}"
-   class="inline-flex items-center justify-center rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition duration-150 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-300">
-    Download Time Sheet
-</a>
-
-                            <a href="{{ route('events.timeSheetReduced', $event->id) }}"
-   class="inline-flex items-center justify-center rounded-lg border border-blue-600 bg-white px-4 py-2.5 text-sm font-semibold text-blue-700 shadow-sm transition duration-150 hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-300">
-    Time Sheet (No Personal Details)
-</a>
-                            
-                            
-
                             <form method="POST" action="{{ route('events.guard-invoices.generate', $event->id) }}" class="inline-block">
                                 @csrf
                                 <button type="submit"
@@ -81,6 +53,56 @@
                                 </button>
                             </form>
                         @endcan
+
+                        {{-- V3-P4: all sheet/export downloads grouped into one menu.
+                             The dropdown itself is ungated so Moderator can reach the
+                             guard pay & payment sheet; the invoicing sheets inside stay
+                             behind manage-invoices as before. --}}
+                        <div x-data="{ open: false }" @keydown.escape.window="open = false" class="relative">
+                            <button type="button" @click="open = !open" @click.outside="open = false"
+                                    class="inline-flex items-center gap-1 rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 shadow-sm transition duration-150 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-gray-300">
+                                Sheets &amp; Exports
+                                <span x-text="open ? '&#9650;' : '&#9660;'" class="text-[10px]"></span>
+                            </button>
+
+                            <div x-show="open" x-cloak
+                                 class="absolute left-0 z-20 mt-1 w-72 overflow-hidden rounded-lg border border-gray-200 bg-white py-1 shadow-lg">
+
+                                <a href="{{ route('events.guardPayments.index', $event->id) }}"
+                                   class="block px-4 py-2 text-sm font-semibold text-gray-800 hover:bg-gray-50">
+                                    Guard Pay &amp; Payments
+                                </a>
+                                <a href="{{ route('events.guardPayments.export', $event->id) }}"
+                                   class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">
+                                    Guard Pay &amp; Payments (Excel)
+                                </a>
+
+                                @can('manage-invoices')
+                                    <div class="my-1 border-t border-gray-100"></div>
+                                    <a href="{{ route('events.staffSheet', $event->id) }}"
+                                       class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">
+                                        Staff Sheet
+                                    </a>
+                                    <a href="{{ route('events.staffPaymentSheet', $event->id) }}"
+                                       class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">
+                                        Staff Payment Sheet
+                                    </a>
+                                    <a href="{{ route('events.staffPaymentSheetReduced', $event->id) }}"
+                                       class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">
+                                        Payment Sheet (No Bank Details)
+                                    </a>
+                                    <div class="my-1 border-t border-gray-100"></div>
+                                    <a href="{{ route('events.timeSheet', $event->id) }}"
+                                       class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">
+                                        Time Sheet
+                                    </a>
+                                    <a href="{{ route('events.timeSheetReduced', $event->id) }}"
+                                       class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">
+                                        Time Sheet (No Personal Details)
+                                    </a>
+                                @endcan
+                            </div>
+                        </div>
 
                         @can('events.edit')
                             <a href="{{ route('events.edit', $event->id) }}"
