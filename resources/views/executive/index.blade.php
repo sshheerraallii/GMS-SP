@@ -36,6 +36,14 @@
             <input type="date" name="date_to" value="{{ $to }}" class="rounded border border-gray-300 px-2 py-1">
         </div>
         <div>
+            <label class="mb-1 block text-xs text-gray-600">View</label>
+            <select name="group" class="rounded border border-gray-300 px-2 py-1">
+                <option value="event"  {{ ($group ?? 'event') === 'event'  ? 'selected' : '' }}>Event-wise</option>
+                <option value="client" {{ ($group ?? 'event') === 'client' ? 'selected' : '' }}>Client-wise</option>
+            </select>
+        </div>
+
+        <div>
             <label class="mb-1 block text-xs text-gray-600">Client (adds a second section)</label>
             <select name="client_id" class="rounded border border-gray-300 px-2 py-1">
                 <option value="">&mdash; none &mdash;</option>
@@ -47,12 +55,17 @@
         <button class="rounded bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-black">Apply</button>
     </form>
 
-    @include('executive.partials.section', ['title' => 'Company-wide', 'data' => $system])
+    @include('executive.partials.section', [
+        'title' => 'Company-wide',
+        'data'  => $system,
+        'group' => $group ?? 'event',
+    ])
 
     @if($client)
         @include('executive.partials.section', [
             'title' => 'Client: ' . (optional($clients->firstWhere('id', $clientId))->name ?? ''),
             'data'  => $client,
+            'group' => 'event',
         ])
     @endif
 </div>

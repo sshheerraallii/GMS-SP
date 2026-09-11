@@ -27,12 +27,16 @@
     </div>
 
     {{-- Per-event table --}}
-    <div class="overflow-x-auto rounded-xl border border-gray-200 bg-white" x-data="{ open: null }">
+    <div class="overflow-x-auto rounded-xl border border-gray-200 bg-white" x-data="{ open: null, openClient: null }">
         <table class="min-w-full text-sm">
             <thead class="bg-gray-50 text-gray-600">
                 <tr>
-                    <th class="px-3 py-2 text-left font-semibold">Event</th>
-                    <th class="px-3 py-2 text-left font-semibold">Client</th>
+                    @if(($group ?? 'event') === 'client')
+                        <th class="px-3 py-2 text-left font-semibold" colspan="2">Client / Event</th>
+                    @else
+                        <th class="px-3 py-2 text-left font-semibold">Event</th>
+                        <th class="px-3 py-2 text-left font-semibold">Client</th>
+                    @endif
                     <th class="px-3 py-2 text-right font-semibold">Hours</th>
                     <th class="px-3 py-2 text-right font-semibold">Charge</th>
                     <th class="px-3 py-2 text-right font-semibold">Pay</th>
@@ -42,87 +46,43 @@
                 </tr>
             </thead>
             <tbody class="divide-y divide-gray-100">
-                @forelse($d['events'] as $ev)
-                    <tr class="hover:bg-gray-50">
-                        <td class="px-3 py-2 font-medium text-gray-900">{{ $ev['event_name'] }}</td>
-                        <td class="px-3 py-2">{{ $ev['client_name'] }}</td>
-                        <td class="px-3 py-2 text-right tabular-nums">{{ number_format($ev['hours'], 2) }}</td>
-                        <td class="px-3 py-2 text-right tabular-nums">
-                            {{ number_format($ev['charge'], 2) }}
-                            @if($ev['charge_rate'] === null)
-                                <span class="ml-1 text-[10px] text-amber-600">rate not set</span>
-                            @endif
-                        </td>
-                        <td class="px-3 py-2 text-right tabular-nums">{{ number_format($ev['pay'], 2) }}</td>
-                        <td class="px-3 py-2 text-right tabular-nums">{{ number_format($ev['expense_total'], 2) }}</td>
-                        <td class="px-3 py-2 text-right tabular-nums font-semibold {{ $ev['profit'] >= 0 ? 'text-emerald-700' : 'text-red-700' }}">{{ number_format($ev['profit'], 2) }}</td>
-                        <td class="px-3 py-2 text-right">
-                            <button type="button"
-                                    class="text-xs font-medium text-gray-500 hover:text-gray-900"
-                                    @click="open === {{ $ev['id'] }} ? open = null : open = {{ $ev['id'] }}"
-                                    x-text="open === {{ $ev['id'] }} ? 'Close' : 'Manage'"></button>
-                        </td>
-                    </tr>
-                    <tr x-show="open === {{ $ev['id'] }}" x-cloak>
-                        <td colspan="8" class="bg-gray-50 px-3 py-3">
-                            <div class="grid grid-cols-1 gap-6 md:grid-cols-2">
-                                {{-- Charge rate --}}
-                                <div>
-                                    <div class="mb-1 text-xs font-semibold text-gray-700">Charge rate (per hour)</div>
-                                    <form method="POST" action="{{ route('executive.chargeRate', $ev['id']) }}" class="flex items-center gap-2">
-                                        @csrf
-                                        <input type="hidden" name="date_from" value="{{ $from }}">
-                                        <input type="hidden" name="date_to" value="{{ $to }}">
-                                        <input type="hidden" name="client_id" value="{{ $clientId }}">
-                                        <input type="number" step="0.01" min="0" name="charge_rate" value="{{ $ev['charge_rate'] }}"
-                                               placeholder="Not set" class="w-32 rounded border border-gray-300 px-2 py-1">
-                                        <button class="rounded bg-gray-900 px-3 py-1 text-xs font-semibold text-white hover:bg-black">Save</button>
-                                    </form>
-                                    <p class="mt-1 text-xs text-gray-400">Writes to the event's charge rate (affects invoicing).</p>
-                                </div>
+                @if(($group ?? 'event') === 'client')
+                    @forelse($d['clients'] as $cl)
+                        <tr class="bg-gray-50/60 hover:bg-gray-100">
+                            <td class="px-3 py-2 font-semibold text-gray-900" colspan="2">
+                                {{ $cl['client_name'] }}
+                                <span class="ml-1 text-xs font-normal text-gray-500">({{ count($cl['events']) }} {{ \Illuminate\Support\Str::plural('event', count($cl['events'])) }})</span>
+                            </td>
+                            <td class="px-3 py-2 text-right tabular-nums">{{ number_format($cl['hours'], 2) }}</td>
+                            <td class="px-3 py-2 text-right tabular-nums">{{ number_format($cl['charge'], 2) }}</td>
+                            <td class="px-3 py-2 text-right tabular-nums">{{ number_format($cl['pay'], 2) }}</td>
+                            <td class="px-3 py-2 text-right tabular-nums">{{ number_format($cl['expense_total'], 2) }}</td>
+                            <td class="px-3 py-2 text-right tabular-nums font-semibold {{ $cl['profit'] >= 0 ? 'text-emerald-700' : 'text-red-700' }}">{{ number_format($cl['profit'], 2) }}</td>
+                            <td class="px-3 py-2 text-right">
+                                <button type="button"
+                                        class="text-xs font-medium text-gray-500 hover:text-gray-900"
+                                        @click="openClient === {{ (int) ($cl['client_id'] ?? 0) }} ? openClient = null : openClient = {{ (int) ($cl['client_id'] ?? 0) }}"
+                                        x-text="openClient === {{ (int) ($cl['client_id'] ?? 0) }} ? 'Hide events' : 'Show events'"></button>
+                            </td>
+                        </tr>
 
-                                {{-- Expenses --}}
-                                <div>
-                                    <div class="mb-1 text-xs font-semibold text-gray-700">Expenses (in range)</div>
-                                    @forelse($ev['expenses'] as $exp)
-                                        <div class="flex items-center justify-between gap-2 border-b border-gray-100 py-1 text-xs">
-                                            <div>
-                                                <span class="font-medium">{{ $exp->label }}</span>
-                                                <span class="text-gray-500">{{ number_format((float) $exp->amount, 2) }}</span>
-                                                @if($exp->date)<span class="text-gray-400">&middot; {{ $exp->date->format('d/m/Y') }}</span>@endif
-                                                @if($exp->note)<div class="text-gray-400">{{ $exp->note }}</div>@endif
-                                            </div>
-                                            <form method="POST" action="{{ route('executive.expenses.destroy', $exp->id) }}">
-                                                @csrf
-                                                @method('DELETE')
-                                                <input type="hidden" name="date_from" value="{{ $from }}">
-                                                <input type="hidden" name="date_to" value="{{ $to }}">
-                                                <input type="hidden" name="client_id" value="{{ $clientId }}">
-                                                <button class="text-red-500 hover:text-red-700">Remove</button>
-                                            </form>
-                                        </div>
-                                    @empty
-                                        <p class="text-xs text-gray-400">No expenses in range.</p>
-                                    @endforelse
-
-                                    <form method="POST" action="{{ route('executive.expenses.store', $ev['id']) }}" class="mt-2 grid grid-cols-2 gap-2">
-                                        @csrf
-                                        <input type="hidden" name="date_from" value="{{ $from }}">
-                                        <input type="hidden" name="date_to" value="{{ $to }}">
-                                        <input type="hidden" name="client_id" value="{{ $clientId }}">
-                                        <input type="text" name="label" placeholder="Label" required class="rounded border border-gray-300 px-2 py-1 text-xs">
-                                        <input type="number" step="0.01" min="0" name="amount" placeholder="Amount" required class="rounded border border-gray-300 px-2 py-1 text-xs">
-                                        <input type="date" name="date" class="rounded border border-gray-300 px-2 py-1 text-xs">
-                                        <input type="text" name="note" placeholder="Note (optional)" class="rounded border border-gray-300 px-2 py-1 text-xs">
-                                        <button class="col-span-2 rounded bg-emerald-600 px-3 py-1 text-xs font-semibold text-white hover:bg-emerald-700">Add expense</button>
-                                    </form>
-                                </div>
-                            </div>
-                        </td>
-                    </tr>
-                @empty
-                    <tr><td colspan="8" class="px-3 py-6 text-center text-gray-500">No events with shifts in this range.</td></tr>
-                @endforelse
+                        @foreach($cl['events'] as $ev)
+                            @include('executive.partials.event-rows', [
+                                'ev'        => $ev,
+                                'rowShow'   => 'openClient === ' . (int) ($cl['client_id'] ?? 0),
+                                'panelShow' => 'openClient === ' . (int) ($cl['client_id'] ?? 0) . ' && open === ' . $ev['id'],
+                            ])
+                        @endforeach
+                    @empty
+                        <tr><td colspan="8" class="px-3 py-6 text-center text-gray-500">No events with shifts in this range.</td></tr>
+                    @endforelse
+                @else
+                    @forelse($d['events'] as $ev)
+                        @include('executive.partials.event-rows', ['ev' => $ev])
+                    @empty
+                        <tr><td colspan="8" class="px-3 py-6 text-center text-gray-500">No events with shifts in this range.</td></tr>
+                    @endforelse
+                @endif
             </tbody>
         </table>
     </div>

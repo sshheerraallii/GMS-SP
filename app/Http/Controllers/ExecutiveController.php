@@ -21,7 +21,11 @@ class ExecutiveController extends Controller
         $to   = $request->input('date_to')   ?: now('Europe/London')->endOfMonth()->toDateString();
         $clientId = $request->input('client_id') ? (int) $request->input('client_id') : null;
 
+        // V3-P6: event-wise (default) or client-wise grouping.
+        $group = $request->input('group') === 'client' ? 'client' : 'event';
+
         return view('executive.index', [
+            'group'    => $group,
             'from'     => $from,
             'to'       => $to,
             'clientId' => $clientId,
@@ -178,6 +182,7 @@ class ExecutiveController extends Controller
             $rows[] = [
                 'id'            => $event->id,
                 'event_name'    => $event->event_name,
+                'client_id'     => $event->client_id,
                 'client_name'   => $event->client?->name ?? '—',
                 'hours'         => round($hours, 2),
                 'pay_rate'      => $payRate,
@@ -195,8 +200,48 @@ class ExecutiveController extends Controller
             $tExp    += $expTotal;
         }
 
+        /*
+         * V3-P6: client-wise grouping layered OVER the per-event rows.
+         * The per-event computation above is untouched — a client row is
+         * only ever the sum of its event rows, so the two views can never
+         * disagree. Rates are deliberately not aggregated: they do not add
+         * up meaningfully across events.
+         */
+        $clientGroups = [];
+
+        foreach ($rows as $row) {
+            $key = $row['client_id'] ?? 0;
+
+            $clientGroups[$key] ??= [
+                'client_id'     => $row['client_id'],
+                'client_name'   => $row['client_name'],
+                'hours'         => 0.0,
+                'pay'           => 0.0,
+                'charge'        => 0.0,
+                'expense_total' => 0.0,
+                'profit'        => 0.0,
+                'events'        => [],
+            ];
+
+            $clientGroups[$key]['hours']         += $row['hours'];
+            $clientGroups[$key]['pay']           += $row['pay'];
+            $clientGroups[$key]['charge']        += $row['charge'];
+            $clientGroups[$key]['expense_total'] += $row['expense_total'];
+            $clientGroups[$key]['profit']        += $row['profit'];
+            $clientGroups[$key]['events'][]       = $row;
+        }
+
+        foreach ($clientGroups as $key => $group) {
+            foreach (['hours', 'pay', 'charge', 'expense_total', 'profit'] as $f) {
+                $clientGroups[$key][$f] = round($group[$f], 2);
+            }
+        }
+
+        usort($clientGroups, fn ($a, $b) => strcasecmp((string) $a['client_name'], (string) $b['client_name']));
+
         return [
-            'events' => $rows,
+            'events'  => $rows,
+            'clients' => $clientGroups,
             'totals' => [
                 'hours'    => round($tHours, 2),
                 'pay'      => round($tPay, 2),
