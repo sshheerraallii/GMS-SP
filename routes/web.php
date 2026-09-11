@@ -6,6 +6,7 @@ use App\Http\Controllers\AuthController;
 use App\Http\Controllers\SecurityGuardController;
 use App\Http\Controllers\ClientController;
 use App\Http\Controllers\EventController;
+use App\Http\Controllers\EventGuardPaymentController;
 use App\Http\Controllers\UserManagementController;
 use App\Http\Controllers\InvoiceController;
 use App\Http\Controllers\GuardInvoiceController;
@@ -301,6 +302,25 @@ Route::middleware('auth')->group(function () {
             Route::get('/{event}/staff-payment-sheet-no-details', [EventController::class, 'exportStaffPaymentSheetReduced'])
                 ->whereNumber('event')
                 ->name('staffPaymentSheetReduced');
+
+            /*
+             * V3-P4 — Guard pay & payment sheet.
+             * Read (index/export) inherits permission:events.view, so every
+             * role that can see events can read it, Moderator included.
+             * Write is gated to Super Admin + Accountant.
+             */
+            Route::get('/{event}/guard-payments', [EventGuardPaymentController::class, 'index'])
+                ->whereNumber('event')
+                ->name('guardPayments.index');
+
+            Route::get('/{event}/guard-payments/export', [EventGuardPaymentController::class, 'export'])
+                ->whereNumber('event')
+                ->name('guardPayments.export');
+
+            Route::post('/{event}/guard-payments', [EventGuardPaymentController::class, 'save'])
+                ->whereNumber('event')
+                ->middleware('can:edit-guard-payments')
+                ->name('guardPayments.save');
                 
 
             Route::get('/{event}', [EventController::class, 'show'])

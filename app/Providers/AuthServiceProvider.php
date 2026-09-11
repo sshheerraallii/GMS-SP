@@ -88,6 +88,22 @@ class AuthServiceProvider extends ServiceProvider
 
         /**
          * ---------------------------------------------------------
+         * GUARD PAYMENTS (V3-P4)
+         * ---------------------------------------------------------
+         * Write access to the event guard pay & payment sheet.
+         * Super Admin (via bypass) + Accountant only.
+         *
+         * READ access is deliberately NOT gated here: the sheet is
+         * readable by any role that can view events, including
+         * Moderator, even though it shows bank details. That is a
+         * recorded, intentional exception to view-guard-details.
+         */
+        Gate::define('edit-guard-payments', function ($user) {
+            return $user->hasRole('Accountant');
+        });
+
+        /**
+         * ---------------------------------------------------------
          * EXECUTIVE HOMEPAGE
          * ---------------------------------------------------------
          * Super Admin only (passes via the bypass above; all other

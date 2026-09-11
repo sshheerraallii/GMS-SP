@@ -135,6 +135,11 @@ class Event extends Model
         return $this->hasMany(\App\Models\EventShift::class);
     }
 
+    public function guardPayments(): HasMany
+    {
+        return $this->hasMany(EventGuardPayment::class);
+    }
+
     public function expenses()
     {
         return $this->hasMany(\App\Models\EventExpense::class);
