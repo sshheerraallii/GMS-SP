@@ -406,6 +406,12 @@ Route::post('/{event}/additional-days-import', [EventController::class, 'importA
                 ->whereNumber('event')->name('expenses.store');
             Route::delete('/expenses/{eventExpense}', [\App\Http\Controllers\ExecutiveController::class, 'deleteExpense'])
                 ->whereNumber('eventExpense')->name('expenses.destroy');
+
+            // V3-P7 — profit receipts (Super Admin only, via the group gate).
+            Route::post('/receipts', [\App\Http\Controllers\ExecutiveController::class, 'storeReceipt'])
+                ->name('receipts.store');
+            Route::delete('/receipts/{profitReceipt}', [\App\Http\Controllers\ExecutiveController::class, 'deleteReceipt'])
+                ->whereNumber('profitReceipt')->name('receipts.destroy');
         });
 
     Route::prefix('chaseup')->name('chaseup.')->group(function () {

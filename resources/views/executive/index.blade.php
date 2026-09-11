@@ -61,6 +61,8 @@
         'group' => $group ?? 'event',
     ])
 
+    @include('executive.partials.receipts', ['r' => $receipts])
+
     @if($client)
         @include('executive.partials.section', [
             'title' => 'Client: ' . (optional($clients->firstWhere('id', $clientId))->name ?? ''),

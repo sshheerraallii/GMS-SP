@@ -6,11 +6,15 @@ use App\Models\Client;
 use App\Models\Event;
 use App\Models\EventExpense;
 use App\Models\EventShift;
+use App\Models\ProfitReceipt;
 use App\Models\SecurityGuard;
 use Illuminate\Http\Request;
 
 class ExecutiveController extends Controller
 {
+    /** Far enough back to cover every shift ever recorded (credits are all-time). */
+    private const ALL_TIME_START = '2000-01-01';
+
     /**
      * Executive homepage (Super Admin only). System-wide profit for a
      * date range, expandable per event, plus a single-client section.
@@ -31,6 +35,7 @@ class ExecutiveController extends Controller
             'clientId' => $clientId,
             'clients'  => Client::query()->orderBy('name')->get(['id', 'name']),
             'system'   => $this->computeForEvents($from, $to, null),
+            'receipts' => $this->computeReceipts($from, $to),
             'client'   => $clientId ? $this->computeForEvents($from, $to, $clientId) : null,
         ]);
     }
@@ -90,6 +95,145 @@ class ExecutiveController extends Controller
     }
 
     /**
+     * V3-P7: record profit received from a client. Super Admin only — the
+     * whole executive route group sits behind can:view-executive.
+     */
+    public function storeReceipt(Request $request)
+    {
+        $data = $request->validate([
+            'receipt_client_id' => 'required|exists:clients,id',
+            'amount'            => 'required|numeric|min:0',
+            'received_on'       => 'required|date',
+            'note'              => 'nullable|string|max:1000',
+            'date_from'         => 'nullable|date',
+            'date_to'           => 'nullable|date',
+            'client_id'         => 'nullable|integer',
+            'group'             => 'nullable|string',
+        ]);
+
+        ProfitReceipt::create([
+            'client_id'   => $data['receipt_client_id'],
+            'amount'      => $data['amount'],
+            'received_on' => $data['received_on'],
+            'note'        => $data['note'] ?? null,
+            'created_by'  => auth()->id(),
+        ]);
+
+        return $this->backToDashboard($data, 'Receipt recorded.');
+    }
+
+    public function deleteReceipt(Request $request, ProfitReceipt $profitReceipt)
+    {
+        $data = $request->validate([
+            'date_from' => 'nullable|date',
+            'date_to'   => 'nullable|date',
+            'client_id' => 'nullable|integer',
+            'group'     => 'nullable|string',
+        ]);
+
+        $profitReceipt->delete();
+
+        return $this->backToDashboard($data, 'Receipt removed.');
+    }
+
+    /**
+     * V3-P7 — confirmed formulas:
+     *
+     *   Profit (range)     charge - pay - expenses for shifts in range (existing calc)
+     *   Received (range)   SUM(profit_receipts.amount) where received_on is in range
+     *   Remaining (range)  Profit (range) - Received (range)
+     *   Credits            ALL profit up to the range END
+     *                      minus ALL receipts up to the range END
+     *
+     * Received and Remaining are date-bound. Credits deliberately IGNORE the
+     * range start — they are the accumulated shortfall carried over from
+     * every prior period, so they can exceed the range's own figures.
+     */
+    private function computeReceipts(string $from, string $to): array
+    {
+        $rangeProfit   = $this->profitByClient($this->computeForEvents($from, $to, null));
+        $allTimeProfit = $this->profitByClient($this->computeForEvents(self::ALL_TIME_START, $to, null));
+
+        $receivedRange = ProfitReceipt::query()
+            ->whereBetween('received_on', [$from, $to])
+            ->selectRaw('client_id, SUM(amount) as total')
+            ->groupBy('client_id')
+            ->pluck('total', 'client_id');
+
+        $receivedAll = ProfitReceipt::query()
+            ->whereDate('received_on', '<=', $to)
+            ->selectRaw('client_id, SUM(amount) as total')
+            ->groupBy('client_id')
+            ->pluck('total', 'client_id');
+
+        $names = Client::query()->pluck('name', 'id');
+
+        $clientIds = collect(array_keys($rangeProfit))
+            ->merge(array_keys($allTimeProfit))
+            ->merge($receivedRange->keys())
+            ->merge($receivedAll->keys())
+            ->map(fn ($id) => (int) $id)
+            ->unique();
+
+        $rows = [];
+        $tProfit = $tReceived = $tRemaining = $tCredits = 0.0;
+
+        foreach ($clientIds as $cid) {
+            $profit    = (float) ($rangeProfit[$cid] ?? 0);
+            $received  = (float) ($receivedRange[$cid] ?? 0);
+            $remaining = $profit - $received;
+            $credits   = (float) ($allTimeProfit[$cid] ?? 0) - (float) ($receivedAll[$cid] ?? 0);
+
+            if ($profit == 0.0 && $received == 0.0 && $credits == 0.0) {
+                continue;
+            }
+
+            $rows[] = [
+                'client_id'   => $cid,
+                'client_name' => $names[$cid] ?? '-',
+                'profit'      => round($profit, 2),
+                'received'    => round($received, 2),
+                'remaining'   => round($remaining, 2),
+                'credits'     => round($credits, 2),
+            ];
+
+            $tProfit    += $profit;
+            $tReceived  += $received;
+            $tRemaining += $remaining;
+            $tCredits   += $credits;
+        }
+
+        usort($rows, fn ($a, $b) => strcasecmp((string) $a['client_name'], (string) $b['client_name']));
+
+        return [
+            'clients' => $rows,
+            'entries' => ProfitReceipt::query()
+                ->with('client:id,name')
+                ->whereBetween('received_on', [$from, $to])
+                ->orderByDesc('received_on')
+                ->get(),
+            'totals'  => [
+                'profit'    => round($tProfit, 2),
+                'received'  => round($tReceived, 2),
+                'remaining' => round($tRemaining, 2),
+                'credits'   => round($tCredits, 2),
+            ],
+        ];
+    }
+
+    /** Reduce a computeForEvents() result to profit keyed by client id. */
+    private function profitByClient(array $data): array
+    {
+        $out = [];
+
+        foreach ($data['clients'] as $group) {
+            $out[(int) ($group['client_id'] ?? 0)] = $group['profit'];
+        }
+
+        return $out;
+    }
+
+    /**
      * Redirect back to the dashboard preserving the active filters.
      */
     private function backToDashboard(array $data, string $message)
@@ -98,6 +242,7 @@ class ExecutiveController extends Controller
             'date_from' => $data['date_from'] ?? null,
             'date_to'   => $data['date_to'] ?? null,
             'client_id' => $data['client_id'] ?? null,
+            'group'     => $data['group'] ?? null,
         ]))->with('success', $message);
     }
 
