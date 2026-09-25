@@ -49,7 +49,8 @@ class EventGuardPaymentController extends Controller
     {
         $data = $request->validate([
             'rows'              => 'required|array',
-            'rows.*.paid_by'    => 'nullable|string|max:255',
+            'rows.*.paid_by'           => 'nullable|string|max:255',
+            'rows.*.paid_from_account' => 'nullable|string|max:255',
             'rows.*.paid_on'    => 'nullable|date',
             'rows.*.remarks'    => 'nullable|string',
         ]);
@@ -73,13 +74,15 @@ class EventGuardPaymentController extends Controller
                 }
 
                 $paidBy  = isset($row['paid_by']) ? trim((string) $row['paid_by']) : null;
+                $account = isset($row['paid_from_account']) ? trim((string) $row['paid_from_account']) : null;
                 $remarks = isset($row['remarks']) ? trim((string) $row['remarks']) : null;
                 $paidOn  = $row['paid_on'] ?? null;
 
                 EventGuardPayment::updateOrCreate(
                     ['event_id' => $event->id, 'guard_id' => $guardId],
                     [
-                        'paid_by' => $paidBy !== '' ? $paidBy : null,
+                        'paid_by'           => $paidBy !== '' ? $paidBy : null,
+                        'paid_from_account' => $account !== '' ? $account : null,
                         'paid_on' => $paidOn ?: null,
                         'remarks' => $remarks !== '' ? $remarks : null,
                     ]

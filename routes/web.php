@@ -185,6 +185,26 @@ Route::middleware('auth')->group(function () {
             Route::get('/guard-statement/download', [\App\Http\Controllers\Reports\GuardStatementController::class, 'download'])
                 ->middleware('can:view-guard-statement')
                 ->name('guardStatement.download');
+
+            /*
+             * Guard Payment Report — on-screen, per guard, grouped
+             * client- or event-wise. Reads and writes the SAME
+             * event_guard_payments rows as the event pay sheet (V3-P4).
+             * View: view-reports. Edit: edit-guard-payments.
+             * Edit history: Super Admin only.
+             */
+            Route::get('/guard-payments', [\App\Http\Controllers\Reports\GuardPaymentReportController::class, 'index'])
+                ->name('guardPayments.index');
+            Route::get('/guard-payments/pdf', [\App\Http\Controllers\Reports\GuardPaymentReportController::class, 'exportPdf'])
+                ->name('guardPayments.pdf');
+            Route::get('/guard-payments/excel', [\App\Http\Controllers\Reports\GuardPaymentReportController::class, 'exportExcel'])
+                ->name('guardPayments.excel');
+            Route::post('/guard-payments/save', [\App\Http\Controllers\Reports\GuardPaymentReportController::class, 'save'])
+                ->middleware('can:edit-guard-payments')
+                ->name('guardPayments.save');
+            Route::get('/guard-payments/history', [\App\Http\Controllers\Reports\GuardPaymentReportController::class, 'history'])
+                ->middleware('role:Super Admin')
+                ->name('guardPayments.history');
         });
 
     /*

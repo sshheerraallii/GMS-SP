@@ -21,6 +21,7 @@ class EventGuardPayment extends Model
         'event_id',
         'guard_id',
         'paid_by',
+        'paid_from_account',
         'paid_on',
         'remarks',
     ];

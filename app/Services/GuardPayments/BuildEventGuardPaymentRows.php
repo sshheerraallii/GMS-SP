@@ -87,6 +87,7 @@ class BuildEventGuardPaymentRows
                 'account_number'   => $row->account_number ?? '',
                 'beneficiary_name' => $row->beneficiary_name ?? '',
                 'paid_by'          => $payment?->paid_by ?? '',
+                'paid_from_account'=> $payment?->paid_from_account ?? '',
                 'paid_on'          => $payment?->paid_on?->format('Y-m-d') ?? '',
                 'remarks'          => $payment?->remarks ?? '',
             ];

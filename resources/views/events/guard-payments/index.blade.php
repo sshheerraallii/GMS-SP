@@ -43,6 +43,7 @@
                         <th class="px-3 py-2 text-left font-semibold">Account Number</th>
                         <th class="px-3 py-2 text-left font-semibold">Beneficiary Name</th>
                         <th class="px-3 py-2 text-left font-semibold">Paid By</th>
+                        <th class="px-3 py-2 text-left font-semibold">Paid From Account</th>
                         <th class="px-3 py-2 text-left font-semibold">Paid On</th>
                         <th class="px-3 py-2 text-left font-semibold">Remarks</th>
                     </tr>
@@ -70,6 +71,11 @@
                                            class="w-32 rounded border border-gray-300 px-2 py-1">
                                 </td>
                                 <td class="px-3 py-2">
+                                    <input type="text" name="rows[{{ $row['guard_id'] }}][paid_from_account]"
+                                           value="{{ $row['paid_from_account'] }}"
+                                           class="w-32 rounded border border-gray-300 px-2 py-1">
+                                </td>
+                                <td class="px-3 py-2">
                                     <input type="date" name="rows[{{ $row['guard_id'] }}][paid_on]"
                                            value="{{ $row['paid_on'] }}"
                                            class="rounded border border-gray-300 px-2 py-1">
@@ -81,13 +87,14 @@
                                 </td>
                             @else
                                 <td class="px-3 py-2">{{ $row['paid_by'] }}</td>
+                                <td class="px-3 py-2">{{ $row['paid_from_account'] }}</td>
                                 <td class="px-3 py-2">{{ $row['paid_on'] }}</td>
                                 <td class="px-3 py-2">{{ $row['remarks'] }}</td>
                             @endif
                         </tr>
                     @empty
                         <tr>
-                            <td colspan="10" class="px-3 py-6 text-center text-gray-500">
+                            <td colspan="11" class="px-3 py-6 text-center text-gray-500">
                                 No guards with shifts on this event.
                             </td>
                         </tr>
@@ -100,7 +107,7 @@
                             <td class="px-3 py-2 text-right tabular-nums">{{ number_format($totals['hours'], 2) }}</td>
                             <td></td>
                             <td class="px-3 py-2 text-right tabular-nums">{{ number_format($totals['amount'], 2) }}</td>
-                            <td colspan="6"></td>
+                            <td colspan="7"></td>
                         </tr>
                     </tfoot>
                 @endif

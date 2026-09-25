@@ -38,6 +38,7 @@ class EventGuardPaymentSheetExport implements FromCollection, WithHeadings, Shou
                 'Account Number'   => $r['account_number'],
                 'Beneficiary Name' => $r['beneficiary_name'],
                 'Paid By'          => $r['paid_by'],
+                'Paid From Account'=> $r['paid_from_account'],
                 'Paid On'          => $r['paid_on'],
                 'Remarks'          => $r['remarks'],
             ]);
@@ -54,6 +55,7 @@ class EventGuardPaymentSheetExport implements FromCollection, WithHeadings, Shou
             'Account Number',
             'Beneficiary Name',
             'Paid By',
+            'Paid From Account',
             'Paid On',
             'Remarks',
         ];
