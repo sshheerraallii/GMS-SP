@@ -398,6 +398,12 @@ Route::post('/{event}/additional-days-import', [EventController::class, 'importA
     ->whereNumber('event')
     ->name('saveGuardSlot');
 
+            // Permanent delete of a mistaken shift entry (removes shift,
+            // chaseup and assignment slot; decrements the day's count).
+            Route::post('/{event}/guards/delete-shift', [EventController::class, 'deleteShift'])
+                ->whereNumber('event')
+                ->name('deleteShift');
+
             Route::post('/{event}/guards/toggle-cancel', [EventController::class, 'toggleCancelShift'])
                 ->whereNumber('event')
                 ->name('toggleCancelShift');

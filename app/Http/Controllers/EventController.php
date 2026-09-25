@@ -5,6 +5,10 @@ namespace App\Http\Controllers;
 use App\Models\Client;
 use App\Models\Event;
 use App\Models\EventShift;
+use App\Models\Invoice;
+use App\Models\GuardInvoice;
+use App\Models\Chaseup;
+use App\Models\EventAssignmentSlot;
 use App\Models\SecurityGuard;
 use App\Models\Supplier;
 use App\Support\Audit;
@@ -564,6 +568,118 @@ $locationValue = $assoc['location'] ?? $assoc['shift_location'] ?? $assoc['site_
             ->update(['cancelled_at' => $currentlyCancelled ? null : now()]);
 
         return back()->with('success', $currentlyCancelled ? 'Shift un-cancelled.' : 'Shift cancelled.');
+    }
+
+    /**
+     * PERMANENTLY delete a guard's shift on a date. For mistaken entries.
+     *
+     * Unlike cancel, this leaves nothing visible: no red row, no zeroed
+     * hours. It removes the shift, its chaseup note and the assignment
+     * slot, then decrements the day's required guard count and renumbers
+     * the remaining slots so the grid stays contiguous.
+     *
+     * Deleting the event_shifts row alone would NOT hold: the assignment
+     * grid is rendered from event_assignment_slots + daily_guards, and
+     * updateGuards() rebuilds shifts from that grid — so the shift would
+     * reappear on the next "Save Assignments". The slot must go too.
+     *
+     * Deliberately ALLOWED even when the shift sits on an issued or paid
+     * invoice (confirmed decision) — the UI warns hard first. Every
+     * deleted shift is written to audit_logs so a mistaken delete can be
+     * reconstructed, even though nothing is visible in the UI.
+     */
+    public function deleteShift(Request $request, Event $event)
+    {
+        $data = $request->validate([
+            'date'     => 'required|date',
+            'guard_id' => 'required|integer|exists:security_guards,id',
+            'confirm'  => 'required|in:DELETE',
+        ]);
+
+        $date    = Carbon::parse($data['date'])->toDateString();
+        $guardId = (int) $data['guard_id'];
+
+        $shifts = EventShift::query()
+            ->where('event_id', $event->id)
+            ->whereDate('date', $date)
+            ->where('guard_id', $guardId)
+            ->get();
+
+        $slots = EventAssignmentSlot::query()
+            ->where('event_id', $event->id)
+            ->whereDate('date', $date)
+            ->where('guard_id', $guardId)
+            ->get();
+
+        if ($shifts->isEmpty() && $slots->isEmpty()) {
+            return back()->withErrors(['delete' => 'No shift found for that guard on that date.']);
+        }
+
+        DB::transaction(function () use ($event, $date, $guardId, $shifts, $slots) {
+            // Audit every row BEFORE it disappears.
+            foreach ($shifts as $shift) {
+                Audit::log('deleted', EventShift::class, (int) $shift->id, $shift->toArray(), null);
+            }
+
+            EventShift::query()
+                ->where('event_id', $event->id)
+                ->whereDate('date', $date)
+                ->where('guard_id', $guardId)
+                ->delete();
+
+            // Chaseup note for that guard/date — removed outright.
+            $chaseups = Chaseup::withTrashed()
+                ->where('event_id', $event->id)
+                ->whereDate('date', $date)
+                ->where('guard_id', $guardId)
+                ->get();
+
+            foreach ($chaseups as $chaseup) {
+                Audit::log('deleted', Chaseup::class, (int) $chaseup->id, $chaseup->toArray(), null);
+                $chaseup->forceDelete();
+            }
+
+            foreach ($slots as $slot) {
+                Audit::log('deleted', EventAssignmentSlot::class, (int) $slot->id, $slot->toArray(), null);
+            }
+
+            EventAssignmentSlot::query()
+                ->where('event_id', $event->id)
+                ->whereDate('date', $date)
+                ->where('guard_id', $guardId)
+                ->delete();
+
+            /*
+             * Renumber the surviving slots for that date to 1..N. The grid
+             * loops 1..requiredCount and matches on slot_no, so a gap would
+             * render an empty row and orphan the higher-numbered slots.
+             * Numbers only ever decrease here, so no unique-key collision.
+             */
+            $remaining = EventAssignmentSlot::query()
+                ->where('event_id', $event->id)
+                ->whereDate('date', $date)
+                ->orderBy('slot_no')
+                ->get();
+
+            $slotNo = 1;
+            foreach ($remaining as $slot) {
+                if ((int) $slot->slot_no !== $slotNo) {
+                    $slot->slot_no = $slotNo;
+                    $slot->save();
+                }
+                $slotNo++;
+            }
+
+            // Decrement the day's required guard count to match.
+            $daily = (array) ($event->daily_guards ?? []);
+            if (array_key_exists($date, $daily)) {
+                $daily[$date] = max(0, (int) $daily[$date] - $slots->count());
+                $event->daily_guards = $daily;
+                $event->save();
+            }
+        });
+
+        return back()->with('success', 'Shift deleted permanently.');
     }
 
     public function guards(Event $event)
@@ -1418,6 +1534,23 @@ private function syncImportedSlotShift(Event $event, string $date, int $slotNo):
             ->groupBy(fn ($slot) => optional($slot->date)->toDateString());
 
         // Cancelled shifts keyed date|guard, so rows can render red.
+        /*
+         * Delete warning: does this event carry an issued/paid invoice?
+         * Deleting a shift covered by one leaves the invoice billing work
+         * that no longer exists, with no cancelled row to explain it.
+         */
+        $clientInvoiceLocked = Invoice::query()
+            ->where('event_id', $event->id)
+            ->whereIn('status', ['issued', 'paid'])
+            ->exists();
+
+        $lockedGuardInvoiceIds = GuardInvoice::query()
+            ->where('event_id', $event->id)
+            ->whereIn('status', ['issued', 'paid'])
+            ->pluck('guard_id')
+            ->map(fn ($id) => (int) $id)
+            ->flip();
+
         $cancelledShiftKeys = $event->shifts
             ->filter(fn ($s) => $s->cancelled_at !== null && $s->guard_id)
             ->map(fn ($s) => optional($s->date)->toDateString() . '|' . (int) $s->guard_id)
@@ -1484,6 +1617,9 @@ private function syncImportedSlotShift(Event $event, string $date, int $slotNo):
     'is_red'      => !empty($rowIssues),
     'is_cancelled' => ($slot && $slot->guard_id)
         ? $cancelledShiftKeys->has($date . '|' . (int) $slot->guard_id)
+        : false,
+    'is_invoiced' => ($slot && $slot->guard_id)
+        ? ($clientInvoiceLocked || $lockedGuardInvoiceIds->has((int) $slot->guard_id))
         : false,
 ];
 

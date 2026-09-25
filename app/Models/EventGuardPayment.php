@@ -35,7 +35,13 @@ class EventGuardPayment extends Model
         return $this->belongsTo(Event::class);
     }
 
-    public function guard(): BelongsTo
+    /**
+     * NOTE: must NOT be named guard() — that collides with Eloquent's
+     * Model::guard(array $guarded) and fatals at class-load time,
+     * breaking every page that touches this model. Named to match
+     * EventShift::securityGuard().
+     */
+    public function securityGuard(): BelongsTo
     {
         return $this->belongsTo(SecurityGuard::class, 'guard_id');
     }

@@ -415,6 +415,22 @@
                         {{ $row['is_cancelled'] ? 'Un-cancel' : 'Cancel' }}
                     </button>
                 </form>
+
+                {{-- Permanent delete — for mistaken entries. Requires typing
+                     DELETE. Warns harder when an issued/paid invoice exists. --}}
+                <form method="POST" action="{{ route('events.deleteShift', $event->id) }}" class="inline-block js-delete-shift"
+                      data-guard="{{ $row['guard'] }}"
+                      data-date="{{ $row['date'] }}"
+                      data-invoiced="{{ $row['is_invoiced'] ? '1' : '0' }}">
+                    @csrf
+                    <input type="hidden" name="date" value="{{ $row['date'] }}">
+                    <input type="hidden" name="guard_id" value="{{ $row['guard_id'] }}">
+                    <input type="hidden" name="confirm" value="">
+                    <button type="submit"
+                            class="inline-flex items-center justify-center rounded-md border border-red-300 bg-white px-3 py-2 text-sm font-semibold text-red-700 shadow-sm hover:bg-red-50">
+                        Delete
+                    </button>
+                </form>
             @endif
             @if($row['is_red'])
                 <button type="button"
@@ -659,6 +675,52 @@
         document.querySelectorAll('form[action*="toggle-cancel"]').forEach(function (form) {
             form.addEventListener('submit', function () {
                 sessionStorage.setItem(key, String(window.scrollY));
+            });
+        });
+
+        // Permanent delete: typed confirmation, harder warning when invoiced.
+        document.querySelectorAll('form.js-delete-shift').forEach(function (form) {
+            form.addEventListener('submit', function (e) {
+                var field = form.querySelector('input[name="confirm"]');
+
+                if (field && field.value === 'DELETE') {
+                    sessionStorage.setItem(key, String(window.scrollY));
+                    return; // already confirmed
+                }
+
+                e.preventDefault();
+
+                var guard = form.dataset.guard || 'this guard';
+                var date = form.dataset.date || '';
+                var invoiced = form.dataset.invoiced === '1';
+
+                var msg = 'PERMANENTLY DELETE the shift for ' + guard + ' on ' + date + '?\n\n'
+                        + 'This removes the shift, its chaseup note and the assignment slot, and reduces '
+                        + 'that day\'s guard count by one. Unlike Cancel, nothing is left behind '
+                        + 'and hours are not shown as zero \u2014 the row simply disappears.\n\n';
+
+                if (invoiced) {
+                    msg += 'WARNING: this event already has an ISSUED or PAID invoice.\n'
+                         + 'That invoice is frozen and will keep billing this shift, but the shift '
+                         + 'will no longer exist in reports or the executive page. The two will not '
+                         + 'agree, and there will be no cancelled row to explain why.\n'
+                         + 'Use Cancel instead unless this was genuinely a mistaken entry.\n\n';
+                }
+
+                msg += 'Type DELETE to confirm.';
+
+                var answer = window.prompt(msg, '');
+
+                if (answer !== 'DELETE') {
+                    if (answer !== null) {
+                        window.alert('Not deleted \u2014 you must type DELETE exactly.');
+                    }
+                    return;
+                }
+
+                if (field) field.value = 'DELETE';
+                sessionStorage.setItem(key, String(window.scrollY));
+                form.submit();
             });
         });
     });
