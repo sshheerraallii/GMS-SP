@@ -33,6 +33,8 @@
         return {
             open: false, unread: 0, items: [],
             async load() {
+                // Two bells exist (desktop + mobile); only the visible one polls.
+                if (this.$el.offsetParent === null) return;
                 try {
                     const r = await fetch(@js(route('notifications.feed')), {headers: {'Accept': 'application/json'}});
                     if (!r.ok) return;

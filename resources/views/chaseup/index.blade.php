@@ -239,6 +239,13 @@
                                                     @click='openAssign(@json($row, JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP | JSON_HEX_TAG))'>
                                                 {{ !empty($row['temp_phone']) ? 'Replace temp guard' : ($row['guard_id'] ? 'Complete shift' : 'Assign guard') }}
                                             </button>
+                                            @if(!empty($row['temp_phone']))
+                                                <button type="button"
+                                                        class="mt-1 block rounded border border-red-300 bg-white px-2 py-0.5 text-[11px] font-semibold text-red-700 hover:bg-red-50"
+                                                        @click='removeTemp(@json($row, JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP | JSON_HEX_TAG))'>
+                                                    Delete temp guard
+                                                </button>
+                                            @endif
                                         @endif
                                     @else
                                     <div class="font-semibold text-gray-900">
@@ -732,6 +739,41 @@ function chaseupPage(config) {
             m.siteName = row.site_name || '';
             m.postcode = row.site_postcode || '';
             m.siteAddress = row.site_address || '';
+        },
+
+        async removeTemp(row) {
+            if (!confirm('Delete this temporary guard? The shift times and site stay; the slot becomes unassigned.')) return;
+            try {
+                const response = await fetch(config.routes.saveSlotTemplate.replace('__EVENT__', row.event_id), {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content,
+                        'Accept': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        date: row.date,
+                        slot_no: row.slot_no,
+                        guard_id: null,
+                        temp_phone: null,
+                        shift1_start: row.start_time || null,
+                        shift1_end: row.end_time || null,
+                        break_hours: row.break_hours !== null && row.break_hours !== undefined ? row.break_hours : 0,
+                        shift1_site_name: row.site_name || null,
+                        shift1_postcode: row.site_postcode || null,
+                        shift1_site_address: row.site_address || null,
+                        source: 'chaseup',
+                    }),
+                });
+                const data = await response.json().catch(() => ({}));
+                if (!response.ok || data.success === false) {
+                    const first = data.errors ? Object.values(data.errors)[0] : null;
+                    throw new Error((first && first[0]) || data.message || 'Could not delete the temp guard.');
+                }
+                window.location.reload();
+            } catch (error) {
+                alert(error.message || 'Could not delete the temp guard.');
+            }
         },
 
         closeShiftModal() {

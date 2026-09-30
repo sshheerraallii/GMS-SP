@@ -303,11 +303,25 @@ class InvoiceController extends Controller
         }
 
         $new = $data['status'];
-        $invoice->status  = $new;
-        $invoice->paid_at = in_array($new, ['paid', 'staff_paid'], true)
-            ? ($invoice->paid_at ?? now())
-            : null;
-        $invoice->save();
+
+        // V4-P7: re-read under a row lock so two simultaneous clicks cannot double-apply / double-notify.
+        $changed = DB::transaction(function () use ($invoice, $new) {
+            $fresh = Invoice::whereKey($invoice->id)->lockForUpdate()->first();
+            if (!$fresh || $fresh->status === $new || !$fresh->isLocked()) {
+                return false;
+            }
+            $fresh->status  = $new;
+            $fresh->paid_at = in_array($new, ['paid', 'staff_paid'], true)
+                ? ($fresh->paid_at ?? now())
+                : null;
+            $fresh->save();
+            $invoice->setRawAttributes($fresh->getAttributes(), true);
+            return true;
+        });
+
+        if (!$changed) {
+            return back();
+        }
 
         $this->notifyInvoice($invoice, $new);
 

@@ -353,6 +353,8 @@ class ChaseupController extends Controller
         DB::beginTransaction();
 
         try {
+            // V4-P7: lock the event row so two simultaneous "Add shift" clicks cannot pick the same slot.
+            $event    = Event::whereKey($event->id)->lockForUpdate()->firstOrFail();
             $daily    = (array) ($event->daily_guards ?? []);
             $maxSlot  = (int) EventAssignmentSlot::query()
                 ->where('event_id', $event->id)->whereDate('date', $date)->max('slot_no');
@@ -416,6 +418,9 @@ class ChaseupController extends Controller
             $value = $value !== null ? trim((string) $value) : null;
             if ($value === '') {
                 $value = null;
+            }
+            if (in_array($field, ['approved_by', 'verified_by'], true) && $value !== null && mb_strlen($value) > 255) {
+                return response()->json(['message' => 'Maximum 255 characters.'], 422);
             }
         }
 

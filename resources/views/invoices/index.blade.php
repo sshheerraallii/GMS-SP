@@ -31,7 +31,7 @@
             <select name="month" class="rounded-lg border border-gray-300 px-3 py-2 text-sm" onchange="this.form.submit()">
                 <option value="" @selected($month === '')>All months</option>
                 @foreach($monthOptions as $m)
-                    <option value="{{ $m }}" @selected($month === $m)>{{ \Carbon\Carbon::createFromFormat('Y-m', $m)->format('F Y') }}</option>
+                    <option value="{{ $m }}" @selected($month === $m)>{{ \Carbon\Carbon::createFromFormat('!Y-m', $m)->format('F Y') }}</option>
                 @endforeach
             </select>
 

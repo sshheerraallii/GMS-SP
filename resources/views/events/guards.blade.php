@@ -123,6 +123,13 @@
                                            x-model="assignedGuards[date][i-1].tempPhone"
                                            @blur="queueSaveRow(date, i-1)">
                                 </template>
+                                <template x-if="canAssign && !assignedGuards[date][i-1]?.id && assignedGuards[date][i-1]?.tempPhone">
+                                    <button type="button"
+                                            class="mt-1 text-[11px] font-semibold text-red-700 hover:underline"
+                                            @click="if (confirm('Delete this temporary guard? Times and site stay.')) { assignedGuards[date][i-1].tempPhone = ''; saveRow(date, i-1); }">
+                                        Delete temp guard
+                                    </button>
+                                </template>
                                 <template x-if="!canAssign && assignedGuards[date][i-1]?.tempPhone">
                                     <div class="mt-1 text-xs font-semibold text-amber-800" x-text="'TEMP ' + assignedGuards[date][i-1].tempPhone"></div>
                                 </template>
@@ -950,6 +957,11 @@ saveRow(date, index) {
         const parsed = parseFloat(v);
         return Number.isNaN(parsed) ? 0 : parsed;
     };
+
+    // V4-P7: a half-typed temp phone is not sent (no error pop-up); it saves once it looks valid.
+    if (!row.id && row.tempPhone && !/^[0-9+()\-\s]{7,32}$/.test(String(row.tempPhone).trim())) {
+        return;
+    }
 
     const key = this.rowKey(date, index);
 

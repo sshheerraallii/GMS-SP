@@ -575,7 +575,12 @@
                            :disabled="!!form.guard_id"
                            maxlength="32"
                            placeholder="e.g. 07700 900123">
-                    <p class="mt-1 text-[11px] text-gray-500">Not saved as a guard. Blocks invoices and guard payments for this event until a real guard is assigned.</p>
+                    <p class="mt-1 text-[11px] text-gray-500">Not saved as a guard. Blocks invoices and guard payments for this event until a real guard is assigned. Pick a guard above to replace it (times and site are kept).</p>
+                    <button type="button" x-show="form.temp_phone && !form.guard_id" x-cloak
+                            @click="removeTemp()" :disabled="saving"
+                            class="mt-2 rounded border border-red-300 bg-white px-2 py-1 text-xs font-semibold text-red-700 hover:bg-red-50">
+                        Delete temp guard (keep times &amp; site)
+                    </button>
                 </div>
 
                 <div class="grid grid-cols-2 gap-3">
@@ -676,6 +681,13 @@
                 };
 
                 this.modalOpen = true;
+            },
+
+            removeTemp() {
+                if (!confirm('Delete this temporary guard? The shift times and site stay; the slot becomes unassigned.')) return;
+                this.form.temp_phone = '';
+                this.form.guard_id = '';
+                this.saveEditor();
             },
 
             closeEditor() {

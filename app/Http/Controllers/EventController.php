@@ -964,6 +964,12 @@ $locationValue = $assoc['location'] ?? $assoc['shift_location'] ?? $assoc['site_
         $event->load(['guards', 'shifts', 'assignmentSlots']);
 
         try {
+            $newTemps = $event->assignmentSlots->pluck('temp_phone')->filter()->all();
+            foreach ($oldTempPhones as $gone) {
+                if (!in_array($gone, $newTemps, true)) {
+                    $this->forgetTempNotice($event->id, $gone);
+                }
+            }
             foreach ($event->assignmentSlots as $s) {
                 if ($s->temp_phone && !in_array($s->temp_phone, $oldTempPhones, true)) {
                     $this->notifySlotChange($event, null, $s, $request);
@@ -1062,17 +1068,19 @@ $locationValue = $assoc['location'] ?? $assoc['shift_location'] ?? $assoc['site_
     $endTime = $validated['shift1_end'] ?? null;
     $breakHours = isset($validated['break_hours']) ? (float) $validated['break_hours'] : 0;
 
-    $sitePostcode = array_key_exists('shift1_postcode', $validated)
-        ? (trim((string) ($validated['shift1_postcode'] ?? '')) ?: null) : null;
-    $siteName = array_key_exists('shift1_site_name', $validated)
-        ? (trim((string) ($validated['shift1_site_name'] ?? '')) ?: null) : null;
-    $siteAddress = array_key_exists('shift1_site_address', $validated)
-        ? (trim((string) ($validated['shift1_site_address'] ?? '')) ?: null) : null;
-
     $oldSlot = $event->assignmentSlots()
         ->whereDate('date', $date)
         ->where('slot_no', $slotNo)
         ->first();
+
+    // V4-P7: when a caller does not send a site field at all, keep what the slot already has
+    // (e.g. removing/replacing a temp guard must not wipe the shift's site details).
+    $sitePostcode = array_key_exists('shift1_postcode', $validated)
+        ? (trim((string) ($validated['shift1_postcode'] ?? '')) ?: null) : optional($oldSlot)->site_postcode;
+    $siteName = array_key_exists('shift1_site_name', $validated)
+        ? (trim((string) ($validated['shift1_site_name'] ?? '')) ?: null) : optional($oldSlot)->site_name;
+    $siteAddress = array_key_exists('shift1_site_address', $validated)
+        ? (trim((string) ($validated['shift1_site_address'] ?? '')) ?: null) : optional($oldSlot)->site_address;
 
     $oldValues = $oldSlot ? [
         'date'        => optional($oldSlot->date)->toDateString(),
@@ -1116,7 +1124,8 @@ $locationValue = $assoc['location'] ?? $assoc['shift_location'] ?? $assoc['site_
     // Compose location; fall back to the existing slot's legacy location
     // when the 3 site fields are empty (grandfathering).
     $composed = $this->composeLocation($siteName, $sitePostcode, $siteAddress);
-    $location = $composed ?? (($guardId || $tempPhone) ? optional($oldSlot)->location : null);
+    $hadTemp  = $oldSlot && $oldSlot->temp_phone;
+    $location = $composed ?? (($guardId || $tempPhone || $hadTemp) ? optional($oldSlot)->location : null);
 
     $cancellationSnapshot = $this->snapshotCancellations($event);
 
@@ -1207,6 +1216,17 @@ $locationValue = $assoc['location'] ?? $assoc['shift_location'] ?? $assoc['site_
 }
 
     
+    /** V4-P7: drop the dedupe record of a removed temp phone so a re-add alerts again. */
+    private function forgetTempNotice(int $eventId, string $phone): void
+    {
+        $digits = preg_replace('/\D+/', '', $phone);
+        if ($digits === '') {
+            return;
+        }
+        \App\Models\AppNotification::where('dedupe_key', 'like', 'temp|' . $eventId . '|%|' . $digits)
+            ->update(['dedupe_key' => null]);
+    }
+
     /** V4-P6: bell (+ email for temp guards) after a slot save. Never throws. */
     private function notifySlotChange(Event $event, $oldSlot, $newSlot, Request $request): void
     {
@@ -1214,6 +1234,11 @@ $locationValue = $assoc['location'] ?? $assoc['shift_location'] ?? $assoc['site_
             $url   = route('events.show', $event, false);
             $dateL = optional($newSlot->date)->format('d M Y');
             $fromChaseup = $request->input('source') === 'chaseup';
+
+            // V4-P7: a temp phone that is gone from this slot may be entered again later and must alert again.
+            if ($oldSlot && $oldSlot->temp_phone && $oldSlot->temp_phone !== $newSlot->temp_phone) {
+                $this->forgetTempNotice($event->id, $oldSlot->temp_phone);
+            }
 
             if ($newSlot->temp_phone && (!$oldSlot || $oldSlot->temp_phone !== $newSlot->temp_phone)) {
                 \App\Services\NotificationService::notify(
