@@ -30,11 +30,32 @@
         </div>
     </div>
 
+    @if($invoice->event)
+        @include('partials.temp-guard-notice', ['event' => $invoice->event])
+    @endif
+
     <div class="bg-white border border-gray-200 rounded-xl shadow-sm p-6">
         <div class="grid grid-cols-2 gap-4 text-sm">
             <div>
                 <div class="text-gray-500">Status</div>
-                <div class="font-semibold text-gray-900">{{ strtoupper($invoice->status) }}</div>
+                <div class="font-semibold text-gray-900">{{ $invoice->statusLabel() }}</div>
+                @can('update-invoice-status')
+                    @if($invoice->isLocked())
+                        <div class="mt-2 flex flex-wrap gap-2">
+                            @foreach(['issued' => 'Issued', 'paid' => 'Paid', 'staff_paid' => 'Staff payments done'] as $st => $label)
+                                @if($invoice->status !== $st)
+                                    <form method="POST" action="{{ route('invoices.status', $invoice) }}">
+                                        @csrf
+                                        <input type="hidden" name="status" value="{{ $st }}">
+                                        <button class="rounded-lg border border-gray-300 px-3 py-1 text-xs font-medium text-gray-800 hover:bg-gray-50">
+                                            Mark {{ $label }}
+                                        </button>
+                                    </form>
+                                @endif
+                            @endforeach
+                        </div>
+                    @endif
+                @endcan
             </div>
             <div>
                 <div class="text-gray-500">Total</div>

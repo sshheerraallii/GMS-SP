@@ -212,6 +212,7 @@
 
             <!-- Right: User + Logout (Desktop) -->
             <div class="hidden md:flex items-center gap-3">
+                @include('partials.notification-bell')
                 <div class="text-sm text-gray-200">
                     <span class="font-medium text-white">{{ Auth::user()->name }}</span>
                 </div>
@@ -228,6 +229,7 @@
 
             <!-- Mobile: Menu Button -->
             <div class="md:hidden flex items-center gap-2">
+                @include('partials.notification-bell')
                 <button type="button"
                         @click="mobileOpen = !mobileOpen"
                         class="inline-flex items-center justify-center rounded-md px-3 py-2 text-gray-200 hover:text-white hover:bg-gray-700 transition focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 focus:ring-offset-gray-800"

@@ -35,6 +35,7 @@
                     <th class="text-left px-4 py-3">ID</th>
                     <th class="text-left px-4 py-3">Name</th>
                     <th class="text-left px-4 py-3">Username</th>
+                    <th class="text-left px-4 py-3">Contact email</th>
                     <th class="text-left px-4 py-3">Role(s)</th>
                     <th class="text-left px-4 py-3">Created</th>
                     <th class="text-left px-4 py-3">Actions</th>
@@ -54,6 +55,16 @@
                         </td>
 
                         <td class="px-4 py-3">{{ $u->email }}</td>
+
+                        <td class="px-4 py-3">
+                            <form method="POST" action="{{ route('users.contactEmail', $u) }}" class="flex gap-1">
+                                @csrf
+                                @method('PATCH')
+                                <input type="email" name="contact_email" value="{{ $u->contact_email }}"
+                                       placeholder="optional" class="border rounded px-2 py-1 text-sm w-44">
+                                <button type="submit" class="bg-gray-700 text-white px-2 py-1 rounded text-xs hover:bg-gray-800">Save</button>
+                            </form>
+                        </td>
 
                         <td class="px-4 py-3">
                             {{ $u->roles->pluck('name')->join(', ') ?: '-' }}
@@ -80,7 +91,7 @@
                     </tr>
                 @empty
                     <tr>
-                        <td colspan="6" class="px-4 py-6 text-center text-gray-500">
+                        <td colspan="7" class="px-4 py-6 text-center text-gray-500">
                             No users found.
                         </td>
                     </tr>

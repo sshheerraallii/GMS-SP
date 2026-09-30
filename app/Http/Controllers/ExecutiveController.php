@@ -6,6 +6,7 @@ use App\Models\Client;
 use App\Models\Event;
 use App\Models\EventExpense;
 use App\Models\EventShift;
+use App\Models\GeneralExpense;
 use App\Models\ProfitReceipt;
 use App\Models\SecurityGuard;
 use Illuminate\Http\Request;
@@ -36,6 +37,7 @@ class ExecutiveController extends Controller
             'clients'  => Client::query()->orderBy('name')->get(['id', 'name']),
             'system'   => $this->computeForEvents($from, $to, null),
             'receipts' => $this->computeReceipts($from, $to),
+            'general'  => $this->computeGeneralExpenses($from, $to),
             'client'   => $clientId ? $this->computeForEvents($from, $to, $clientId) : null,
         ]);
     }
@@ -92,6 +94,71 @@ class ExecutiveController extends Controller
         $eventExpense->delete();
 
         return $this->backToDashboard($data, 'Expense removed.');
+    }
+
+    /**
+     * V4-P3: add a company-wide general expense. Super Admin only via the
+     * executive group gate.
+     */
+    public function storeGeneralExpense(Request $request)
+    {
+        $data = $request->validate([
+            'label'     => 'required|string|max:255',
+            'amount'    => 'required|numeric|min:0',
+            'date'      => 'required|date',
+            'note'      => 'nullable|string|max:1000',
+            'date_from' => 'nullable|date',
+            'date_to'   => 'nullable|date',
+            'client_id' => 'nullable|integer',
+            'group'     => 'nullable|string',
+        ]);
+
+        GeneralExpense::create([
+            'label'      => $data['label'],
+            'amount'     => $data['amount'],
+            'date'       => $data['date'],
+            'note'       => $data['note'] ?? null,
+            'created_by' => auth()->id(),
+        ]);
+
+        return $this->backToDashboard($data, 'General expense added.');
+    }
+
+    public function deleteGeneralExpense(Request $request, GeneralExpense $generalExpense)
+    {
+        $data = $request->validate([
+            'date_from' => 'nullable|date',
+            'date_to'   => 'nullable|date',
+            'client_id' => 'nullable|integer',
+            'group'     => 'nullable|string',
+        ]);
+
+        $generalExpense->delete();
+
+        return $this->backToDashboard($data, 'General expense removed.');
+    }
+
+    /**
+     * V4-P3: general expenses in the range, and the resulting Net Profit.
+     *
+     *   Net Profit (range) = company Profit (range) - General Expenses (range)
+     *
+     * Company Profit is the untouched charge - pay - event expenses figure.
+     * General expenses belong to no client, so client rows and the
+     * Received / Remaining / Credits figures are deliberately NOT changed.
+     */
+    private function computeGeneralExpenses(string $from, string $to): array
+    {
+        $entries = GeneralExpense::query()
+            ->whereBetween('date', [$from, $to])
+            ->orderByDesc('date')
+            ->orderByDesc('id')
+            ->get();
+
+        return [
+            'entries' => $entries,
+            'total'   => round((float) $entries->sum('amount'), 2),
+        ];
     }
 
     /**
@@ -266,6 +333,10 @@ class ExecutiveController extends Controller
          */
         $guardCategories = SecurityGuard::withTrashed()->pluck('category', 'id');
 
+        // V4-P2: client invoice state per event (read-only badge).
+        $invoiceStatus = \App\Models\Invoice::query()->pluck('status', 'event_id');
+        $tempGuardEventIds = Event::idsWithTempGuards()->flip();
+
         $rows = [];
         $tHours = 0.0;
         $tPay = 0.0;
@@ -329,6 +400,8 @@ class ExecutiveController extends Controller
                 'event_name'    => $event->event_name,
                 'client_id'     => $event->client_id,
                 'client_name'   => $event->client?->name ?? '—',
+                'invoice_status' => $invoiceStatus[$event->id] ?? null,
+                'has_temp_guard' => $tempGuardEventIds->has((int) $event->id),
                 'hours'         => round($hours, 2),
                 'pay_rate'      => $payRate,
                 'charge_rate'   => $event->charge_rate, // nullable → "not set"

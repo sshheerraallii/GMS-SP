@@ -27,8 +27,31 @@ class InvoiceController extends Controller
         $perPage = max(1, (int) $request->get('per_page', 20));
         $q = trim((string) $request->get('q', ''));
 
+        // V4-P2: month filter. First visit (no `month` key) defaults to the
+        // current month; the form always sends the key, '' meaning all months.
+        $month = $request->has('month')
+            ? trim((string) $request->get('month'))
+            : now('Europe/London')->format('Y-m');
+        if ($month !== '' && !preg_match('/^\d{4}-(0[1-9]|1[0-2])$/', $month)) {
+            $month = '';
+        }
+
+        // Month options: every month that has an invoice, plus the current one.
+        $dateExpr = 'COALESCE(issued_at, created_at)';
+        $monthOptions = Invoice::query()
+            ->selectRaw("DATE_FORMAT({$dateExpr}, '%Y-%m') as ym")
+            ->groupBy('ym')->pluck('ym')
+            ->push(now('Europe/London')->format('Y-m'))
+            ->push($month)
+            ->filter()->unique()->sortDesc()->values();
+
+        $tempGuardEventIds = \App\Models\Event::idsWithTempGuards()->flip();
+
         $invoices = Invoice::query()
             ->with(['event', 'event.client'])
+            ->when($month !== '', function ($query) use ($month, $dateExpr) {
+                $query->whereRaw("DATE_FORMAT({$dateExpr}, '%Y-%m') = ?", [$month]);
+            })
             ->when($q !== '', function ($query) use ($q) {
                 $query->whereHas('event', function ($eventQ) use ($q) {
                     $eventQ->where('event_name', 'like', "%{$q}%")
@@ -41,7 +64,7 @@ class InvoiceController extends Controller
             ->paginate($perPage)
             ->withQueryString();
 
-        return view('invoices.index', compact('invoices', 'q', 'perPage'));
+        return view('invoices.index', compact('invoices', 'q', 'perPage', 'month', 'monthOptions', 'tempGuardEventIds'));
     }
 
     /**
@@ -203,6 +226,10 @@ class InvoiceController extends Controller
      */
     public function issue(Invoice $invoice)
     {
+        if ($message = optional($invoice->event)->tempGuardBlockMessage()) {
+            return back()->with('error', $message);
+        }
+
         if (!$invoice->isDraft()) {
             abort(403, 'Only draft invoices can be issued.');
         }
@@ -222,9 +249,69 @@ class InvoiceController extends Controller
             ]);
         });
 
+        $this->notifyInvoice($invoice, 'issued');
+
         return redirect()
             ->route('invoices.show', $invoice)
             ->with('success', 'Invoice issued and PDF generated.');
+    }
+
+    /** V4-P6: bell notice on invoice status change. Never throws. */
+    private function notifyInvoice(Invoice $invoice, string $status): void
+    {
+        try {
+            $label = Invoice::STATUS_LABELS[$status] ?? ucfirst($status);
+            \App\Services\NotificationService::notify(
+                'invoice',
+                'Invoice ' . $invoice->invoice_number . ': ' . $label,
+                (optional($invoice->event)->event_name ?: 'Event') . ' — status changed to ' . $label . ' by ' . (auth()->user()->name ?? 'a user') . '.',
+                route('invoices.show', $invoice, false),
+                ['finance']
+            );
+        } catch (\Throwable $e) {
+            report($e);
+        }
+    }
+
+    /**
+     * V4-P2: manual status move — Issued / Paid / Staff payments done, in
+     * any order. Deliberate limits:
+     *  - a Draft is issued only through issue() (that is what numbers,
+     *    locks and stores the PDF), so draft -> paid is refused;
+     *  - once issued an invoice can never return to Draft;
+     *  - legacy 'void' invoices are not touched.
+     * Gate: update-invoice-status (Super Admin + Accountant).
+     */
+    public function updateStatus(Request $request, Invoice $invoice)
+    {
+        $data = $request->validate([
+            'status' => 'required|in:issued,paid,staff_paid',
+        ]);
+
+        if ($message = optional($invoice->event)->tempGuardBlockMessage()) {
+            return back()->with('error', $message);
+        }
+
+        if ($invoice->isDraft()) {
+            return back()->with('error', 'Issue the draft first — it cannot go straight to ' . Invoice::STATUS_LABELS[$data['status']] . '.');
+        }
+        if (!$invoice->isLocked()) {
+            return back()->with('error', 'This invoice status cannot be changed.');
+        }
+        if ($invoice->status === $data['status']) {
+            return back();
+        }
+
+        $new = $data['status'];
+        $invoice->status  = $new;
+        $invoice->paid_at = in_array($new, ['paid', 'staff_paid'], true)
+            ? ($invoice->paid_at ?? now())
+            : null;
+        $invoice->save();
+
+        $this->notifyInvoice($invoice, $new);
+
+        return back()->with('success', 'Invoice ' . $invoice->invoice_number . ' set to ' . Invoice::STATUS_LABELS[$new] . '.');
     }
 
     /**
@@ -248,7 +335,7 @@ class InvoiceController extends Controller
         $pdf = Pdf::loadView('invoices.pdf', ['invoice' => $invoice])->setPaper('a4', 'portrait');
         $output = $pdf->output();
 
-        if ($invoice->status === 'issued') {
+        if ($invoice->isLocked()) {
             $path = $this->storePdfBytes($invoice, $output);
             $invoice->update(['pdf_path' => $path]);
         }
@@ -277,7 +364,7 @@ class InvoiceController extends Controller
         $pdf = Pdf::loadView('invoices.pdf', ['invoice' => $invoice])->setPaper('a4', 'portrait');
         $output = $pdf->output();
 
-        if ($invoice->status === 'issued') {
+        if ($invoice->isLocked()) {
             $path = $this->storePdfBytes($invoice, $output);
             $invoice->update(['pdf_path' => $path]);
         }

@@ -4,6 +4,8 @@
 <div class="container mx-auto p-4 max-w-6xl"
      x-data="eventShiftInlineEditor()">
 
+    @include('partials.temp-guard-notice', ['event' => $event])
+
     {{-- Header --}}
     <div class="mb-6 rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden">
         <div class="flex flex-col gap-5 p-5 lg:flex-row lg:items-start lg:justify-between">
@@ -311,6 +313,26 @@
                             $rows = $assignmentRowsByDate[$date] ?? [];
                             $issues = $assignmentIssuesByDate[$date] ?? [];
                             $hasIssues = !empty($issues);
+
+                            // Net hours per assigned, non-cancelled row (overnight-safe, minus break).
+                            $rowHours = function (array $r): float {
+                                if (empty($r['guard_id']) || !empty($r['is_cancelled'])) return 0.0;
+                                if (empty($r['start_value']) || empty($r['end_value'])) return 0.0;
+                                $st = strtotime($r['start_value']);
+                                $en = strtotime($r['end_value']);
+                                if ($en <= $st) $en = strtotime('+1 day', $en);
+                                return max(0.0, round((($en - $st) / 3600) - (float) ($r['break_value'] ?? 0), 2));
+                            };
+                            $blocks = [];
+                            $dateHours = 0.0;
+                            foreach ($rows as $r) {
+                                $h = $rowHours($r);
+                                if ($h <= 0) continue;
+                                $k = $r['start_value'] . ' - ' . $r['end_value'] . ' (break ' . (float) $r['break_value'] . 'h)';
+                                $blocks[$k]['guards'] = ($blocks[$k]['guards'] ?? 0) + 1;
+                                $blocks[$k]['hours']  = ($blocks[$k]['hours'] ?? 0) + $h;
+                                $dateHours += $h;
+                            }
                         @endphp
 
                         <div class="border rounded overflow-hidden">
@@ -365,6 +387,7 @@
                                                 <th class="border-b px-3 py-2 text-left w-28">Start</th>
                                                 <th class="border-b px-3 py-2 text-left w-28">End</th>
                                                 <th class="border-b px-3 py-2 text-left w-28">Break</th>
+                                                <th class="border-b px-3 py-2 text-right w-20">Hours</th>
                                                 <th class="border-b px-3 py-2 text-left">Location</th>
                                                 <th class="border-b px-3 py-2 text-left">Status</th>
                                                 <th class="border-b px-3 py-2 text-right w-24">Action</th>
@@ -374,11 +397,19 @@
                                             @foreach($rows as $row)
                                                 <tr class="{{ $row['is_cancelled'] ? 'bg-red-100 hover:bg-red-100' : ($row['is_red'] ? 'bg-red-50 hover:bg-red-50' : 'hover:bg-gray-50') }}">
                                                     <td class="border-b px-3 py-2">{{ $row['slot_no'] }}</td>
-                                                    <td class="border-b px-3 py-2">{{ $row['guard'] }}</td>
+                                                    <td class="border-b px-3 py-2">
+                                                        @if(!empty($row['temp_phone']))
+                                                            <span class="inline-flex items-center rounded-full bg-amber-200 px-2 py-0.5 text-[11px] font-bold text-amber-900">TEMP</span>
+                                                            {{ $row['temp_phone'] }}
+                                                        @else
+                                                            {{ $row['guard'] }}
+                                                        @endif
+                                                    </td>
                                                     <td class="border-b px-3 py-2">{{ $row['license'] }}</td>
                                                     <td class="border-b px-3 py-2">{{ $row['start'] }}</td>
                                                     <td class="border-b px-3 py-2">{{ $row['end'] }}</td>
                                                     <td class="border-b px-3 py-2">{{ $row['break'] }}h</td>
+                                                    <td class="border-b px-3 py-2 text-right">{{ $rowHours($row) > 0 ? number_format($rowHours($row), 2) : '—' }}</td>
                                                     <td class="border-b px-3 py-2">{{ $row['location'] }}</td>
                                                     
                                                     
@@ -449,6 +480,22 @@
                                                 </tr>
                                             @endforeach
                                         </tbody>
+                                        @if($dateHours > 0)
+                                            <tfoot class="bg-gray-50 text-sm">
+                                                @foreach($blocks as $label => $blk)
+                                                    <tr>
+                                                        <td colspan="6" class="px-3 py-1.5 text-right text-gray-600">Shift {{ $label }} &middot; {{ $blk['guards'] }} guard(s)</td>
+                                                        <td class="px-3 py-1.5 text-right font-medium">{{ number_format($blk['hours'], 2) }}</td>
+                                                        <td colspan="3"></td>
+                                                    </tr>
+                                                @endforeach
+                                                <tr class="border-t font-semibold">
+                                                    <td colspan="6" class="px-3 py-2 text-right">Total hours, all guards ({{ \Carbon\Carbon::parse($date)->format('d M Y') }})</td>
+                                                    <td class="px-3 py-2 text-right">{{ number_format($dateHours, 2) }}</td>
+                                                    <td colspan="3"></td>
+                                                </tr>
+                                            </tfoot>
+                                        @endif
                                     </table>
                                 </div>
                             @endif
@@ -509,7 +556,8 @@
                 <div>
                     <label class="block text-xs font-semibold text-gray-600 mb-1">Guard</label>
                     <select class="w-full rounded border-gray-300"
-                            x-model="form.guard_id">
+                            x-model="form.guard_id"
+                            @change="if (form.guard_id) form.temp_phone = ''">
                         <option value="">Select guard</option>
                         @foreach($guards as $guard)
                             <option value="{{ $guard->id }}">
@@ -517,6 +565,17 @@
                             </option>
                         @endforeach
                     </select>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-semibold text-gray-600 mb-1">or Temporary guard (phone only)</label>
+                    <input type="text"
+                           class="w-full rounded border-gray-300"
+                           x-model="form.temp_phone"
+                           :disabled="!!form.guard_id"
+                           maxlength="32"
+                           placeholder="e.g. 07700 900123">
+                    <p class="mt-1 text-[11px] text-gray-500">Not saved as a guard. Blocks invoices and guard payments for this event until a real guard is assigned.</p>
                 </div>
 
                 <div class="grid grid-cols-2 gap-3">
@@ -595,6 +654,7 @@
                 date: '',
                 slot_no: '',
                 guard_id: '',
+                temp_phone: '',
                 shift1_start: '',
                 shift1_end: '',
                 break_hours: '0',
@@ -608,6 +668,7 @@
                     date: row.date || '',
                     slot_no: row.slot_no || '',
                     guard_id: row.guard_id ? String(row.guard_id) : '',
+                    temp_phone: row.temp_phone || '',
                     shift1_start: row.start_value || '',
                     shift1_end: row.end_value || '',
                     break_hours: row.break_value || '0',

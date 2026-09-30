@@ -24,6 +24,8 @@ class Chaseup extends Model
         'reaching_time',
         'book_on',
         'comments',
+        'approved_by',
+        'verified_by',
     ];
 
     protected $casts = [

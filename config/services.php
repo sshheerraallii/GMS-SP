@@ -21,6 +21,12 @@ return [
         'scheme' => 'https',
     ],
 
+    // V4-P6: Resend (critical emails only). Off until both are set in .env.
+    'resend' => [
+        'key'  => env('RESEND_API_KEY'),
+        'from' => env('RESEND_FROM'),
+    ],
+
     'postmark' => [
         'token' => env('POSTMARK_TOKEN'),
     ],

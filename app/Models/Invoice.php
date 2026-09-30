@@ -62,4 +62,24 @@ class Invoice extends Model
     {
         return $this->status === 'draft';
     }
+
+    /** V4-P2: display labels. 'void' is legacy and never set by the app. */
+    public const STATUS_LABELS = [
+        'draft'      => 'Draft',
+        'issued'     => 'Issued',
+        'paid'       => 'Paid',
+        'staff_paid' => 'Staff payments done',
+        'void'       => 'Void',
+    ];
+
+    public function statusLabel(): string
+    {
+        return self::STATUS_LABELS[$this->status] ?? strtoupper((string) $this->status);
+    }
+
+    /** Past the draft stage: numbered, PDF stored, not editable. */
+    public function isLocked(): bool
+    {
+        return in_array($this->status, ['issued', 'paid', 'staff_paid'], true);
+    }
 }

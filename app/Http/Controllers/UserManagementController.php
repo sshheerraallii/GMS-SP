@@ -40,6 +40,16 @@ public function destroy(\App\Models\User $user)
 
 
 
+    /** V4-P6: set / clear the optional real email used for critical alerts. */
+    public function updateContactEmail(Request $request, User $user)
+    {
+        $data = $request->validate(['contact_email' => 'nullable|email|max:255']);
+        $user->contact_email = ($data['contact_email'] ?? '') !== '' ? $data['contact_email'] : null;
+        $user->save();
+
+        return back()->with('success', 'Contact email updated for ' . $user->name . '.');
+    }
+
     public function store(Request $request)
     {
         $validated = $request->validate([
@@ -49,6 +59,7 @@ public function destroy(\App\Models\User $user)
             // We'll store this in users.email (acts as username/login). Keep it unique.
             'username'   => 'required|string|max:255|unique:users,email',
 
+            'contact_email' => 'nullable|email|max:255',
             'password'   => 'required|string|min:8|max:255',
             'role'       => 'required|exists:roles,name',
         ]);
@@ -56,6 +67,7 @@ public function destroy(\App\Models\User $user)
         $user = User::create([
             'name'     => trim($validated['first_name'] . ' ' . $validated['last_name']),
             'email'    => $validated['username'],
+            'contact_email' => $validated['contact_email'] ?? null,
             'password' => Hash::make($validated['password']),
         ]);
 

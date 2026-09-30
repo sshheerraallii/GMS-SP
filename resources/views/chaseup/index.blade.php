@@ -11,7 +11,12 @@
             updateFieldBase: @js(url('/chaseup/shift')),
             latestActorBase: @js(url('/chaseup/shift')),
             historyBase: @js(url('/chaseup/shift')),
-        }
+            addShift: @js(route('chaseup.addShift')),
+            saveSlotTemplate: @js(route('events.saveGuardSlot', ['event' => '__EVENT__'])),
+            chaseupIndex: @js(route('chaseup.index')),
+        },
+        selectedDate: @js($selectedDate),
+        eventsOnDate: @js($eventsOnDate),
     })"
     x-init="init()"
 >
@@ -30,6 +35,16 @@
                     <span class="font-semibold text-red-600">{{ $rows->where('is_missing', true)->count() }}</span>
                     Missing
                 </div>
+
+                @if($canAssign)
+                    <button
+                        type="button"
+                        @click="openAdd()"
+                        class="inline-flex items-center rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-800 transition hover:bg-gray-50"
+                    >
+                        + Add shift
+                    </button>
+                @endif
 
                 <button
                     type="button"
@@ -53,6 +68,8 @@
                         name="date"
                         value="{{ request('date', $selectedDate) }}"
                         class="rounded-lg border px-3 py-2 text-sm"
+                        title="Picking a date opens it in a new tab"
+                        @change="dateChanged($event)"
                     >
                 </div>
 
@@ -139,7 +156,7 @@
         {{-- TABLE --}}
         <div class="overflow-hidden rounded-xl border bg-white">
             <div class="overflow-x-auto">
-                <table class="min-w-[2600px] w-full text-sm text-gray-700">
+                <table class="min-w-[2960px] w-full text-sm text-gray-700">
                     <thead class="bg-gray-100 text-gray-700">
                         <tr class="border-b">
                             <th class="sticky left-0 z-30 min-w-[110px] border-r bg-gray-100 p-3 text-left font-semibold">Date</th>
@@ -160,6 +177,8 @@
                             <th class="min-w-[140px] p-3 text-left font-semibold">Reaching Time</th>
                             <th class="min-w-[180px] p-3 text-left font-semibold">Book On</th>
                             <th class="min-w-[260px] p-3 text-left font-semibold">Comments</th>
+                            <th class="min-w-[180px] p-3 text-left font-semibold">Approved By</th>
+                            <th class="min-w-[180px] p-3 text-left font-semibold">Verified By</th>
 
                             @if($canViewAudit)
                                 <th class="min-w-[150px] p-3 text-left font-semibold">Actor</th>
@@ -176,7 +195,9 @@
 
                                 $rowBg = 'bg-white';
                                 $rowStyle = '';
-                                if (!empty($row['is_cancelled'])) {
+                                if (!empty($row['is_empty'])) {
+                                    $rowBg = 'bg-slate-100';
+                                } elseif (!empty($row['is_cancelled'])) {
                                     $rowBg = 'bg-red-100';
                                 } elseif (!empty($row['is_missing'])) {
                                     $rowBg = 'bg-red-50';
@@ -200,9 +221,30 @@
                                 </td>
 
                                 <td class="sticky left-[110px] z-20 border-r bg-inherit p-3 align-top">
+                                    @if(!empty($row['is_empty']))
+                                        @if(!empty($row['temp_phone']))
+                                            <div class="font-semibold text-gray-900">Temporary guard</div>
+                                            <span class="mt-1 inline-flex items-center rounded-full bg-amber-200 px-2 py-0.5 text-[11px] font-bold text-amber-900">
+                                                TEMP &middot; {{ $row['temp_phone'] }}
+                                            </span>
+                                        @else
+                                        <div class="font-semibold text-gray-900">{{ $row['guard_name'] ?? 'Unassigned' }}</div>
+                                        <span class="mt-1 inline-flex items-center rounded-full bg-slate-300 px-2 py-0.5 text-[11px] font-semibold text-slate-800">
+                                            {{ $row['guard_id'] ? 'Incomplete shift' : 'Unassigned' }}
+                                        </span>
+                                        @endif
+                                        @if($canAssign)
+                                            <button type="button"
+                                                    class="mt-1 block rounded border border-gray-400 bg-white px-2 py-0.5 text-[11px] font-semibold text-gray-800 hover:bg-gray-50"
+                                                    @click='openAssign(@json($row, JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP | JSON_HEX_TAG))'>
+                                                {{ !empty($row['temp_phone']) ? 'Replace temp guard' : ($row['guard_id'] ? 'Complete shift' : 'Assign guard') }}
+                                            </button>
+                                        @endif
+                                    @else
                                     <div class="font-semibold text-gray-900">
                                         {{ $row['guard_name'] ?? '-' }}
                                     </div>
+                                    @endif
                                     @if(!empty($row['is_cancelled']))
                                         <span class="mt-1 inline-flex items-center rounded-full bg-red-200 px-2 py-0.5 text-[11px] font-semibold text-red-800">Cancelled</span>
                                     @endif
@@ -239,6 +281,7 @@
                                     @endif
                                 </td>
 
+                                @if(empty($row['is_empty']))
                                 <td class="p-2 align-top">
                                     <input
                                         type="text"
@@ -337,8 +380,45 @@
                                     >
                                 </td>
 
+                                <td class="p-2 align-top">
+                                    <input
+                                        type="text"
+                                        class="w-full rounded-lg border px-3 py-2 text-sm"
+                                        data-field="approved_by"
+                                        data-shift-id="{{ $row['shift_id'] }}"
+                                        value="{{ $row['approved_by'] ?? '' }}"
+                                        @input="markDirty($event)"
+                                        @blur="queueFieldSave($event)"
+                                    >
+                                </td>
+
+                                <td class="p-2 align-top">
+                                    <input
+                                        type="text"
+                                        class="w-full rounded-lg border px-3 py-2 text-sm"
+                                        data-field="verified_by"
+                                        data-shift-id="{{ $row['shift_id'] }}"
+                                        value="{{ $row['verified_by'] ?? '' }}"
+                                        @input="markDirty($event)"
+                                        @blur="queueFieldSave($event)"
+                                    >
+                                </td>
+                                @else
+                                <td class="p-2 align-top text-xs text-gray-400"></td>
+                                <td class="p-2 align-top text-xs text-gray-400"></td>
+                                <td class="p-2 align-top text-xs text-gray-400"></td>
+                                <td class="p-2 align-top text-xs text-gray-400"></td>
+                                <td class="p-2 align-top text-xs text-gray-400"></td>
+                                <td class="p-2 align-top text-xs text-gray-400"></td>
+                                <td class="p-2 align-top text-xs text-gray-400"></td>
+                                <td class="p-2 align-top text-xs text-gray-400"></td>
+                                <td class="p-2 align-top text-xs text-gray-400"></td>
+                                <td class="p-2 align-top text-xs text-gray-400"></td>
+                                @endif
+
                                 @if($canViewAudit)
                                     <td class="p-2 align-top">
+                                        @if(empty($row['is_empty']))
                                         <button
                                             type="button"
                                             class="rounded-lg border px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50"
@@ -346,12 +426,13 @@
                                         >
                                             Actor
                                         </button>
+                                        @endif
                                     </td>
                                 @endif
                             </tr>
                         @empty
                             <tr>
-                                <td colspan="{{ $canViewAudit ? 18 : 17 }}" class="p-8 text-center text-sm text-gray-500">
+                                <td colspan="{{ $canViewAudit ? 20 : 19 }}" class="p-8 text-center text-sm text-gray-500">
                                     No ChaseUp rows found for the selected filters.
                                 </td>
                             </tr>
@@ -370,6 +451,104 @@
             x-cloak
         ></div>
     </div>
+
+    {{-- ADD / ASSIGN SHIFT MODAL (V4-P4) --}}
+    @if($canAssign)
+    <template x-teleport="body">
+        <div x-show="shiftModal.open" x-cloak x-transition.opacity
+             class="fixed inset-0 z-[9999] flex items-center justify-center p-4"
+             @keydown.escape.window="closeShiftModal()">
+            <div class="absolute inset-0 bg-black/50" @click="closeShiftModal()"></div>
+            <div class="relative z-10 w-full max-w-lg rounded-2xl border border-gray-200 bg-white shadow-2xl" @click.stop>
+                <div class="flex items-center justify-between border-b px-5 py-4">
+                    <div>
+                        <h3 class="text-base font-semibold text-gray-900" x-text="shiftModal.mode === 'add' ? 'Add new shift' : (shiftModal.guardId ? 'Complete shift' : 'Assign guard')"></h3>
+                        <p class="mt-0.5 text-xs text-gray-500" x-show="shiftModal.mode === 'assign'" x-text="shiftModal.eventLabel + ' · slot ' + shiftModal.slotNo + ' · ' + shiftModal.date"></p>
+                        <p class="mt-0.5 text-xs text-gray-500" x-show="shiftModal.mode === 'add'" x-text="'Adds one more required guard slot on ' + shiftModal.date"></p>
+                    </div>
+                    <button type="button" @click="closeShiftModal()" class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50">Close</button>
+                </div>
+
+                <div class="space-y-3 px-5 py-4 text-sm">
+                    <div x-show="shiftModal.error" class="rounded-lg border border-red-200 bg-red-50 p-2 text-xs text-red-700" x-text="shiftModal.error"></div>
+
+                    <div x-show="shiftModal.mode === 'add'">
+                        <label class="mb-1 block text-xs font-medium text-gray-600">Event</label>
+                        <select x-model="shiftModal.eventId" class="w-full rounded-lg border px-3 py-2 text-sm">
+                            <option value="">Select event…</option>
+                            <template x-for="ev in config.eventsOnDate" :key="ev.id">
+                                <option :value="ev.id" x-text="ev.label"></option>
+                            </template>
+                        </select>
+                        <p class="mt-1 text-[11px] text-gray-400" x-show="!config.eventsOnDate.length">No events run on this date.</p>
+                    </div>
+
+                    <div>
+                        <label class="mb-1 block text-xs font-medium text-gray-600">Guard</label>
+                        <select x-model="shiftModal.guardId" class="w-full rounded-lg border px-3 py-2 text-sm">
+                            <option value="">Select guard…</option>
+                            @foreach($guards as $g)
+                                <option value="{{ $g->id }}">{{ $g->fullname }}</option>
+                            @endforeach
+                        </select>
+                    </div>
+
+                    <div>
+                        <label class="mb-1 block text-xs font-medium text-gray-600">or Temporary guard (phone only)</label>
+                        <input type="text" x-model="shiftModal.tempPhone" :disabled="!!shiftModal.guardId" maxlength="32"
+                               placeholder="e.g. 07700 900123" class="w-full rounded-lg border px-3 py-2 text-sm">
+                        <p class="mt-1 text-[11px] text-gray-500">Not saved as a guard. Invoices and guard payments for this event stay blocked until a real guard replaces it.</p>
+                    </div>
+
+                    <div class="grid grid-cols-3 gap-2">
+                        <div>
+                            <label class="mb-1 block text-xs font-medium text-gray-600">Start</label>
+                            <input type="time" x-model="shiftModal.start" class="w-full rounded-lg border px-2 py-2 text-sm">
+                        </div>
+                        <div>
+                            <label class="mb-1 block text-xs font-medium text-gray-600">End</label>
+                            <input type="time" x-model="shiftModal.end" class="w-full rounded-lg border px-2 py-2 text-sm">
+                        </div>
+                        <div>
+                            <label class="mb-1 block text-xs font-medium text-gray-600">Break (h)</label>
+                            <select x-model="shiftModal.breakHours" class="w-full rounded-lg border px-2 py-2 text-sm">
+                                <option value="0">0</option>
+                                <option value="0.25">0.25</option>
+                                <option value="0.5">0.5</option>
+                                <option value="0.75">0.75</option>
+                                <option value="1">1</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="mb-1 block text-xs font-medium text-gray-600">Site name</label>
+                        <input type="text" x-model="shiftModal.siteName" maxlength="255" class="w-full rounded-lg border px-3 py-2 text-sm">
+                    </div>
+                    <div class="grid grid-cols-2 gap-2">
+                        <div>
+                            <label class="mb-1 block text-xs font-medium text-gray-600">Postcode</label>
+                            <input type="text" x-model="shiftModal.postcode" maxlength="255" class="w-full rounded-lg border px-3 py-2 text-sm">
+                        </div>
+                        <div>
+                            <label class="mb-1 block text-xs font-medium text-gray-600">Site address</label>
+                            <input type="text" x-model="shiftModal.siteAddress" maxlength="255" class="w-full rounded-lg border px-3 py-2 text-sm">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="flex justify-end gap-2 border-t px-5 py-3">
+                    <button type="button" @click="closeShiftModal()" class="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">Cancel</button>
+                    <button type="button" @click="submitShift()" :disabled="shiftModal.saving"
+                            class="rounded-lg bg-black px-4 py-2 text-sm font-semibold text-white hover:bg-gray-800 disabled:opacity-60">
+                        <span x-show="!shiftModal.saving">Save shift</span>
+                        <span x-show="shiftModal.saving">Saving…</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </template>
+    @endif
 
     {{-- AUDIT MODAL --}}
    
@@ -501,6 +680,118 @@ function chaseupPage(config) {
 
         init() {
             this.$nextTick(() => this.cfInit());
+        },
+
+        // ---------- V4-P4: date opens in a new tab; add / assign shift ----------
+        config,
+        _dateTimer: null,
+        shiftModal: {
+            open: false, mode: 'add', saving: false, error: '',
+            eventId: '', eventLabel: '', slotNo: null, date: '',
+            guardId: '', tempPhone: '', start: '', end: '', breakHours: '0',
+            siteName: '', postcode: '', siteAddress: '',
+        },
+
+        dateChanged(e) {
+            const el = e.target;
+            const picked = el.value;
+            clearTimeout(this._dateTimer);
+            // Debounced: typing a date fires change on every valid partial value.
+            this._dateTimer = setTimeout(() => {
+                if (!picked || picked === config.selectedDate) return;
+                window.open(config.routes.chaseupIndex + '?date=' + encodeURIComponent(picked), '_blank');
+                el.value = config.selectedDate; // this tab stays on its own date
+            }, 700);
+        },
+
+        _resetModal(mode) {
+            this.shiftModal = {
+                open: true, mode, saving: false, error: '',
+                eventId: '', eventLabel: '', slotNo: null, date: config.selectedDate,
+                guardId: '', tempPhone: '', start: '', end: '', breakHours: '0',
+                siteName: '', postcode: '', siteAddress: '',
+            };
+        },
+
+        openAdd() {
+            this._resetModal('add');
+        },
+
+        openAssign(row) {
+            this._resetModal('assign');
+            const m = this.shiftModal;
+            m.eventId = String(row.event_id);
+            m.eventLabel = row.client_event_label || row.event_name || '';
+            m.slotNo = row.slot_no;
+            m.date = row.date;
+            m.guardId = row.guard_id ? String(row.guard_id) : '';
+            m.tempPhone = row.temp_phone || '';
+            m.start = row.start_time || '';
+            m.end = row.end_time || '';
+            m.breakHours = row.break_hours !== null && row.break_hours !== undefined ? String(row.break_hours) : '0';
+            m.siteName = row.site_name || '';
+            m.postcode = row.site_postcode || '';
+            m.siteAddress = row.site_address || '';
+        },
+
+        closeShiftModal() {
+            if (this.shiftModal.saving) return;
+            this.shiftModal.open = false;
+        },
+
+        async submitShift() {
+            const m = this.shiftModal;
+            m.error = '';
+
+            if (m.mode === 'add' && !m.eventId) { m.error = 'Select an event.'; return; }
+            if (!m.guardId && !String(m.tempPhone || '').trim()) { m.error = 'Select a guard or enter a temporary guard phone.'; return; }
+            if (!m.start || !m.end) { m.error = 'Start and end time are required.'; return; }
+
+            const payload = {
+                date: m.date,
+                guard_id: m.guardId || null,
+                temp_phone: m.guardId ? null : String(m.tempPhone || '').trim(),
+                shift1_start: m.start,
+                shift1_end: m.end,
+                break_hours: m.breakHours,
+                shift1_site_name: m.siteName,
+                shift1_postcode: m.postcode,
+                shift1_site_address: m.siteAddress,
+                source: 'chaseup',
+            };
+
+            let url;
+            if (m.mode === 'add') {
+                url = config.routes.addShift;
+                payload.event_id = m.eventId;
+            } else {
+                url = config.routes.saveSlotTemplate.replace('__EVENT__', m.eventId);
+                payload.slot_no = m.slotNo;
+            }
+
+            m.saving = true;
+            try {
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content,
+                        'Accept': 'application/json',
+                    },
+                    body: JSON.stringify(payload),
+                });
+                const data = await response.json().catch(() => ({}));
+
+                if (!response.ok || data.success === false) {
+                    const first = data.errors ? Object.values(data.errors)[0] : null;
+                    throw new Error((first && first[0]) || data.message || 'Could not save the shift.');
+                }
+
+                window.location.reload();
+            } catch (error) {
+                m.error = error.message || 'Could not save the shift.';
+                m.saving = false;
+            }
         },
 
         // ---------- existing editing behaviour (unchanged) ----------

@@ -26,6 +26,7 @@ class Event extends Model
         'charge_rate_steward',
         'invoice_date',
         'staff_pay_date',
+        'client_invoice_received',
         'pay_rate',
         'pay_rate_sia',
         'pay_rate_steward',
@@ -42,6 +43,7 @@ class Event extends Model
     protected $casts = [
         'start_date'   => 'date',
         'end_date'     => 'date',
+        'client_invoice_received' => 'boolean',
         'daily_guards' => 'array',
     ];
 
@@ -134,6 +136,49 @@ class Event extends Model
     public function shifts()
     {
         return $this->hasMany(\App\Models\EventShift::class);
+    }
+
+    /**
+     * V4-P5: slots held by a temporary guard (phone only, no guard record).
+     */
+    public function tempGuardSlots(): HasMany
+    {
+        return $this->hasMany(\App\Models\EventAssignmentSlot::class)
+            ->whereNull('guard_id')
+            ->whereNotNull('temp_phone');
+    }
+
+    public function hasTempGuards(): bool
+    {
+        return $this->tempGuardSlots()->exists();
+    }
+
+    /**
+     * Message shown whenever a billing / payment action is refused because
+     * the event still has temporary guards. NULL when nothing blocks.
+     */
+    public function tempGuardBlockMessage(): ?string
+    {
+        $phones = $this->tempGuardSlots()->pluck('temp_phone')->unique()->values();
+
+        if ($phones->isEmpty()) {
+            return null;
+        }
+
+        return 'Blocked: this event still has ' . $phones->count()
+            . ' temporary guard(s) (' . $phones->implode(', ') . '). '
+            . 'Replace them with real guards first.';
+    }
+
+    /** Ids of every event that currently has a temporary guard. */
+    public static function idsWithTempGuards(): \Illuminate\Support\Collection
+    {
+        return \App\Models\EventAssignmentSlot::query()
+            ->whereNull('guard_id')
+            ->whereNotNull('temp_phone')
+            ->distinct()
+            ->pluck('event_id')
+            ->map(fn ($id) => (int) $id);
     }
 
     public function guardPayments(): HasMany

@@ -33,6 +33,8 @@
         @endif
     </div>
 
+    @include('partials.temp-guard-notice', ['event' => $event])
+
     <!-- Master Table Container -->
     <div class="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
         <table class="w-full text-sm table-fixed">

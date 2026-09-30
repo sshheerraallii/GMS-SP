@@ -15,6 +15,8 @@
         </p>
     </div>
 
+    @include('partials.temp-guard-notice', ['event' => $event])
+
     <!-- Summary Card -->
     <div class="bg-white shadow rounded-lg p-6 grid grid-cols-1 sm:grid-cols-2 gap-6">
 

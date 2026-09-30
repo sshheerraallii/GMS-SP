@@ -171,6 +171,22 @@
                                         @if($ev['invoice_status'])
                                             <span class="rounded-full bg-gray-100 px-2 py-0.5 uppercase tracking-wide">{{ $ev['invoice_status'] }}</span>
                                         @endif
+                                        @if($canEdit)
+                                            <form method="POST" action="{{ route('reports.guardPayments.clientInvoiceReceived') }}" class="flex items-center gap-1">
+                                                @csrf
+                                                <input type="hidden" name="event_id" value="{{ $ev['event_id'] }}">
+                                                <label class="text-[11px] text-gray-500">Client invoice received?</label>
+                                                <select name="received" onchange="this.form.submit()"
+                                                        class="rounded border border-gray-300 px-1 py-0.5 text-xs {{ $ev['client_invoice_received'] ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800' }}">
+                                                    <option value="0" {{ !$ev['client_invoice_received'] ? 'selected' : '' }}>No</option>
+                                                    <option value="1" {{ $ev['client_invoice_received'] ? 'selected' : '' }}>Yes</option>
+                                                </select>
+                                            </form>
+                                        @else
+                                            <span class="rounded-full px-2 py-0.5 {{ $ev['client_invoice_received'] ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800' }}">
+                                                Client invoice received: {{ $ev['client_invoice_received'] ? 'Yes' : 'No' }}
+                                            </span>
+                                        @endif
                                     </div>
                                 </div>
 

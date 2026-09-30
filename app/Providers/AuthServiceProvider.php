@@ -49,6 +49,12 @@ class AuthServiceProvider extends ServiceProvider
          * ---------------------------------------------------------
          * Only Admins & Super Admins
          */
+        // V4-P2: move a client invoice between Issued / Paid / Staff payments done.
+        // Super Admin passes via Gate::before; Accountant explicitly.
+        Gate::define('update-invoice-status', function ($user) {
+            return $user->hasRole('Accountant');
+        });
+
         Gate::define('manage-invoices', function ($user) {
             return $user->hasAnyRole(['Admin', 'Accountant']);
         });

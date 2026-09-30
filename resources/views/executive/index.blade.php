@@ -61,6 +61,8 @@
         'group' => $group ?? 'event',
     ])
 
+    @include('executive.partials.general-expenses', ['g' => $general, 'profit' => $system['totals']['profit']])
+
     @include('executive.partials.receipts', ['r' => $receipts])
 
     @if($client)

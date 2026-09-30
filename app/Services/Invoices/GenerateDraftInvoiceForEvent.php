@@ -28,6 +28,11 @@ class GenerateDraftInvoiceForEvent
 
     public function handle(Event $event): Invoice
     {
+        // V4-P5: a temporary guard has no shift row, so hours would be silently under-billed.
+        if ($message = $event->tempGuardBlockMessage()) {
+            throw \Illuminate\Validation\ValidationException::withMessages(['temp_guard' => $message]);
+        }
+
         return DB::transaction(function () use ($event) {
 
             $event->loadMissing('supplier');

@@ -23,6 +23,10 @@ class GenerateDailyInvoices implements ShouldQueue
             ->get();
 
         foreach ($events as $event) {
+            if ($event->hasTempGuards()) {
+                continue; // V4-P5: blocked while temporary guards remain
+            }
+
             $service->handle($event); // idempotent
         }
     }

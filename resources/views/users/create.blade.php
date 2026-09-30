@@ -44,6 +44,13 @@
         </div>
 
         <div>
+            <label class="block text-sm font-medium mb-1">Contact email <span class="text-gray-400">(optional)</span></label>
+            <input type="email" name="contact_email" value="{{ old('contact_email') }}"
+                   class="w-full border rounded px-3 py-2">
+            <p class="text-xs text-gray-500 mt-1">Real email for critical alerts (temp guard, pay-date). Not used for login.</p>
+        </div>
+
+        <div>
             <label class="block text-sm font-medium mb-1">Role</label>
             <select name="role" class="w-full border rounded px-3 py-2" required>
                 <option value="" disabled {{ old('role') ? '' : 'selected' }}>Select role</option>

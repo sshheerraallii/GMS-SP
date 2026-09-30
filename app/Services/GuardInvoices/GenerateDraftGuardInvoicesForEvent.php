@@ -15,6 +15,11 @@ class GenerateDraftGuardInvoicesForEvent
 
     public function handle(Event $event): array
     {
+        // V4-P5: block while the event has temporary guards.
+        if ($message = $event->tempGuardBlockMessage()) {
+            throw \Illuminate\Validation\ValidationException::withMessages(['temp_guard' => $message]);
+        }
+
         return DB::transaction(function () use ($event) {
 
             $guardIds = EventShift::query()

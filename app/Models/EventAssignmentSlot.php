@@ -14,6 +14,7 @@ class EventAssignmentSlot extends Model
         'date',
         'slot_no',
         'guard_id',
+        'temp_phone',
         'start_time',
         'end_time',
         'break_hours',

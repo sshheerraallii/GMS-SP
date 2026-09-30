@@ -47,6 +47,10 @@ class EventGuardPaymentController extends Controller
      */
     public function save(Request $request, Event $event)
     {
+        if ($message = $event->tempGuardBlockMessage()) {
+            return back()->with('error', $message);
+        }
+
         $data = $request->validate([
             'rows'              => 'required|array',
             'rows.*.paid_by'           => 'nullable|string|max:255',

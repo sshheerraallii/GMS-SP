@@ -33,6 +33,12 @@ Route::middleware('guest')->group(function () {
 */
 Route::middleware('auth')->group(function () {
 
+    // V4-P6: notification bell + list
+    Route::get('/notifications', [\App\Http\Controllers\NotificationController::class, 'index'])->name('notifications.index');
+    Route::get('/notifications/feed', [\App\Http\Controllers\NotificationController::class, 'feed'])->name('notifications.feed');
+    Route::post('/notifications/read-all', [\App\Http\Controllers\NotificationController::class, 'readAll'])->name('notifications.readAll');
+    Route::post('/notifications/{id}/read', [\App\Http\Controllers\NotificationController::class, 'read'])->whereNumber('id')->name('notifications.read');
+
     /*
     |--------------------------------------------------------------------------
     | Home / Dashboard
@@ -81,6 +87,11 @@ Route::middleware('auth')->group(function () {
             Route::put('/{invoice}', [InvoiceController::class, 'update'])
                 ->whereNumber('invoice')
                 ->name('update');
+
+            Route::post('/{invoice}/status', [InvoiceController::class, 'updateStatus'])
+                ->whereNumber('invoice')
+                ->middleware('can:update-invoice-status')
+                ->name('status');
 
             Route::post('/{invoice}/issue', [InvoiceController::class, 'issue'])
                 ->whereNumber('invoice')
@@ -202,6 +213,9 @@ Route::middleware('auth')->group(function () {
             Route::post('/guard-payments/save', [\App\Http\Controllers\Reports\GuardPaymentReportController::class, 'save'])
                 ->middleware('can:edit-guard-payments')
                 ->name('guardPayments.save');
+            Route::post('/guard-payments/client-invoice-received', [\App\Http\Controllers\Reports\GuardPaymentReportController::class, 'saveClientInvoiceReceived'])
+                ->middleware('can:edit-guard-payments')
+                ->name('guardPayments.clientInvoiceReceived');
             Route::get('/guard-payments/history', [\App\Http\Controllers\Reports\GuardPaymentReportController::class, 'history'])
                 ->middleware('role:Super Admin')
                 ->name('guardPayments.history');
@@ -433,6 +447,12 @@ Route::post('/{event}/additional-days-import', [EventController::class, 'importA
             Route::delete('/expenses/{eventExpense}', [\App\Http\Controllers\ExecutiveController::class, 'deleteExpense'])
                 ->whereNumber('eventExpense')->name('expenses.destroy');
 
+            // V4-P3 — company-wide general expenses (Super Admin only, via the group gate).
+            Route::post('/general-expenses', [\App\Http\Controllers\ExecutiveController::class, 'storeGeneralExpense'])
+                ->name('generalExpenses.store');
+            Route::delete('/general-expenses/{generalExpense}', [\App\Http\Controllers\ExecutiveController::class, 'deleteGeneralExpense'])
+                ->whereNumber('generalExpense')->name('generalExpenses.destroy');
+
             // V3-P7 — profit receipts (Super Admin only, via the group gate).
             Route::post('/receipts', [\App\Http\Controllers\ExecutiveController::class, 'storeReceipt'])
                 ->name('receipts.store');
@@ -447,6 +467,10 @@ Route::post('/{event}/additional-days-import', [EventController::class, 'importA
         // feed and is likewise available to anyone logged in.
         Route::get('/pay-date-reminders', [EventGuardPaymentController::class, 'payDateReminders'])
             ->name('payDateReminders');
+        // V4-P4: add a brand-new shift (one more required slot) from the chaseup sheet.
+        Route::post('/shift/add', [ChaseupController::class, 'addShift'])
+            ->middleware('permission:shifts.assign')
+            ->name('addShift');
         Route::post('/shift/{eventShift}/field', [ChaseupController::class, 'updateField'])
             ->whereNumber('eventShift')
             ->name('updateField');
@@ -472,6 +496,7 @@ Route::post('/{event}/additional-days-import', [EventController::class, 'importA
         Route::get('/users/create', [UserManagementController::class, 'create'])->name('users.create');
         Route::post('/users', [UserManagementController::class, 'store'])->name('users.store');
         Route::delete('/users/{user}', [UserManagementController::class, 'destroy'])->name('users.destroy');
+        Route::patch('/users/{user}/contact-email', [UserManagementController::class, 'updateContactEmail'])->name('users.contactEmail');
     });
 
     /*

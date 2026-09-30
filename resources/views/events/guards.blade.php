@@ -113,6 +113,20 @@
                                     </button>
                                 </template>
 
+                                {{-- V4-P5: temporary guard = phone only, no guard record --}}
+                                <template x-if="canAssign && !assignedGuards[date][i-1]?.id">
+                                    <input type="text"
+                                           class="mt-1 w-full border rounded px-2 py-1 text-xs"
+                                           :class="assignedGuards[date][i-1]?.tempPhone ? 'border-amber-400 bg-amber-50' : ''"
+                                           maxlength="32"
+                                           placeholder="or Temp guard phone"
+                                           x-model="assignedGuards[date][i-1].tempPhone"
+                                           @blur="queueSaveRow(date, i-1)">
+                                </template>
+                                <template x-if="!canAssign && assignedGuards[date][i-1]?.tempPhone">
+                                    <div class="mt-1 text-xs font-semibold text-amber-800" x-text="'TEMP ' + assignedGuards[date][i-1].tempPhone"></div>
+                                </template>
+
                                 <template x-if="!canAssign">
                                     <div class="w-full text-left px-2 py-1 border rounded bg-gray-50 text-gray-500">
                                         <span x-text="assignedGuards[date][i-1]?.name || 'Select Guard'"></span>
@@ -482,6 +496,7 @@ function guardAssignment(dailyGuards, guards, shiftMode, existingAssignments, ca
     for (let date in dailyGuards) {
         assigned[date] = Array.from({ length: Number(dailyGuards[date]) }, () => ({
             id: null,
+            tempPhone: '',
             name: '',
             shift1Start: '',
             shift1End: '',
@@ -502,6 +517,7 @@ function guardAssignment(dailyGuards, guards, shiftMode, existingAssignments, ca
 
             assigned[date][idx] = {
                 id: row.guard_id ?? null,
+                tempPhone: row.temp_phone || '',
                 name: g ? g.fullname : '',
                 shift1Start: (row.shift1_start || '').toString().slice(0, 5),
                 shift1End: (row.shift1_end || '').toString().slice(0, 5),
@@ -742,6 +758,7 @@ autosaveTimers: {},
 
                 rows[rowIndex].id = selected.id;
                 rows[rowIndex].name = selected.fullname;
+                rows[rowIndex].tempPhone = ''; // a real guard replaces any temp guard
 
                 if (this.shiftMode === 'same') {
                     rows[rowIndex].shift1Start = this.globalShiftStart;
@@ -942,6 +959,7 @@ saveRow(date, index) {
         date: date,
         slot_no: index + 1,
         guard_id: row.id || null,
+        temp_phone: row.id ? null : (row.tempPhone ? String(row.tempPhone).trim() : null),
         shift1_start: norm(row.shift1Start),
         shift1_end: norm(row.shift1End),
         break_hours: normBreak(row.breakHours),
@@ -1010,6 +1028,7 @@ saveRow(date, index) {
 
                 payload.assignments[date] = this.assignedGuards[date].map(g => ({
                     guard_id: g.id || null,
+                    temp_phone: g.id ? null : (g.tempPhone ? String(g.tempPhone).trim() : null),
                     shift1_start: norm(g.shift1Start),
                     shift1_end: norm(g.shift1End),
                     break_hours: normBreak(g.breakHours),

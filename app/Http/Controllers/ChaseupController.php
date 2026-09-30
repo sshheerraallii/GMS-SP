@@ -4,10 +4,13 @@ namespace App\Http\Controllers;
 
 use App\Models\AuditLog;
 use App\Models\Chaseup;
+use App\Models\Event;
+use App\Models\EventAssignmentSlot;
 use App\Models\EventShift;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Collection;
 
 class ChaseupController extends Controller
 {
@@ -124,12 +127,30 @@ class ChaseupController extends Controller
                 'reaching_time'      => $chaseup?->reaching_time ? substr((string) $chaseup->reaching_time, 0, 5) : null,
                 'book_on'            => $chaseup?->book_on,
                 'comments'           => $chaseup?->comments,
+                'approved_by'        => $chaseup?->approved_by,
+                'verified_by'        => $chaseup?->verified_by,
+                'is_empty'           => false,
 
                 'missing_fields'     => $missingFields,
                 'is_missing'         => !empty($missingFields),
                 'is_cancelled'       => $shift->cancelled_at !== null,
             ];
         });
+
+        /*
+         * V4-P4: unfilled slots. Chaseup rows come from event_shifts, which
+         * only exist once a guard AND times are set, so an unfilled required
+         * slot was invisible here. Show them as rows the team can act on.
+         * Skipped when a guard / All Ok / On Way filter is active, since an
+         * unfilled slot has none of those.
+         */
+        $noEmpties = !empty($guardId)
+            || ($allOk !== null && $allOk !== '')
+            || ($onWay !== null && $onWay !== '');
+
+        if (!$noEmpties) {
+            $rows = $rows->concat($this->emptySlotRows($selectedDate, $clientId, $eventId))->values();
+        }
 
         if ($allOk !== null && $allOk !== '') {
             $rows = $rows->filter(fn ($row) => ($row['all_ok'] ?? '') === $allOk)->values();
@@ -173,7 +194,22 @@ class ChaseupController extends Controller
             ->orderBy('fullname')
             ->get();
 
+        // V4-P4: events running on the selected date, for the Add shift popup.
+        $eventsOnDate = Event::query()
+            ->with('client:id,name')
+            ->where(fn ($q) => $q->whereNull('start_date')->orWhereDate('start_date', '<=', $selectedDate))
+            ->where(fn ($q) => $q->whereNull('end_date')->orWhereDate('end_date', '>=', $selectedDate))
+            ->orderBy('event_name')
+            ->get(['id', 'event_name', 'client_id'])
+            ->map(fn ($e) => [
+                'id'    => (int) $e->id,
+                'label' => trim(collect([optional($e->client)->name, $e->event_name])->filter()->implode(' · ')),
+            ])
+            ->values();
+
         return view('chaseup.index', [
+            'eventsOnDate'   => $eventsOnDate,
+            'canAssign'      => auth()->user()?->can('shifts.assign') ?? false,
             'rows'           => $rows,
             'selectedDate'   => $selectedDate,
             'clients'        => $clients,
@@ -191,10 +227,175 @@ class ChaseupController extends Controller
         ]);
     }
 
+    /**
+     * V4-P4: rows for required slots that have no usable shift yet — no
+     * guard, or a guard without start/end times (no event_shifts row).
+     */
+    private function emptySlotRows(string $date, $clientId, $eventId): Collection
+    {
+        $events = Event::query()
+            ->with('client:id,name,color')
+            ->when(!empty($clientId), fn ($q) => $q->where('client_id', $clientId))
+            ->when(!empty($eventId), fn ($q) => $q->where('id', $eventId))
+            ->where(fn ($q) => $q->whereNull('start_date')->orWhereDate('start_date', '<=', $date))
+            ->where(fn ($q) => $q->whereNull('end_date')->orWhereDate('end_date', '>=', $date))
+            ->get()
+            ->filter(fn (Event $e) => (int) (((array) ($e->daily_guards ?? []))[$date] ?? 0) > 0);
+
+        if ($events->isEmpty()) {
+            return collect();
+        }
+
+        $slotsByEvent = EventAssignmentSlot::query()
+            ->with('securityGuard:id,fullname')
+            ->whereIn('event_id', $events->pluck('id'))
+            ->whereDate('date', $date)
+            ->get()
+            ->groupBy('event_id');
+
+        $rows = collect();
+
+        foreach ($events as $event) {
+            $required = (int) ((array) $event->daily_guards)[$date];
+            $slots    = $slotsByEvent->get($event->id, collect());
+
+            for ($i = 1; $i <= $required; $i++) {
+                $slot = $slots->firstWhere('slot_no', $i);
+
+                // Complete slot (guard + both times) already shows as a normal row.
+                if ($slot && $slot->guard_id && $slot->start_time && $slot->end_time) {
+                    continue;
+                }
+
+                $start = $slot?->start_time ? substr((string) $slot->start_time, 0, 5) : null;
+                $end   = $slot?->end_time ? substr((string) $slot->end_time, 0, 5) : null;
+                $break = $slot && $slot->break_hours !== null ? (float) $slot->break_hours : null;
+
+                $missing = [];
+                if (!$slot || !$slot->guard_id) { $missing[] = 'guard'; }
+                if (!$start) { $missing[] = 'start_time'; }
+                if (!$end) { $missing[] = 'end_time'; }
+
+                $clientName = optional($event->client)->name;
+
+                $rows->push([
+                    'shift_id'           => null,
+                    'is_empty'           => true,
+                    'slot_no'            => $i,
+                    'date'               => $date,
+                    'day'                => Carbon::parse($date)->format('l'),
+                    'guard_id'           => $slot?->guard_id ? (int) $slot->guard_id : null,
+                    'guard_name'         => optional($slot?->securityGuard)->fullname,
+                    'temp_phone'         => ($slot && !$slot->guard_id) ? $slot->temp_phone : null,
+                    'location'           => $slot?->location,
+                    'start_time'         => $start,
+                    'end_time'           => $end,
+                    'break_hours'        => $break,
+                    'total_hours'        => $this->calculateTotalHours($date, $start, $end, $break),
+                    'site_name'          => $slot?->site_name,
+                    'site_postcode'      => $slot?->site_postcode,
+                    'site_address'       => $slot?->site_address,
+                    'client_name'        => $clientName,
+                    'client_color'       => optional($event->client)->color,
+                    'event_id'           => (int) $event->id,
+                    'event_name'         => $event->event_name,
+                    'client_event_label' => trim(collect([$clientName, $event->event_name])->filter()->implode(' · ')) ?: null,
+
+                    'reminder' => null, 'all_ok' => null, 'all_ok_response' => null,
+                    'on_way' => null, 'on_way_response' => null, 'reaching_time' => null,
+                    'book_on' => null, 'comments' => null, 'approved_by' => null, 'verified_by' => null,
+
+                    'missing_fields' => $missing,
+                    'is_missing'     => true,
+                    'is_cancelled'   => false,
+                ]);
+            }
+        }
+
+        return $rows;
+    }
+
+    /**
+     * V4-P4: add a brand-new shift to an event on a date. That means one
+     * more required guard slot for the day (daily_guards + 1) and then the
+     * SAME save the event page uses (EventController@saveGuardSlot), so
+     * validation, share-code expiry check, event_shifts rebuild, guard sync,
+     * cancellation preservation and audit all behave identically.
+     * All-or-nothing: if the slot save is refused, the count bump is
+     * rolled back.
+     */
+    public function addShift(Request $request)
+    {
+        $data = $request->validate([
+            'event_id'            => 'required|exists:events,id',
+            'date'                => 'required|date',
+            'guard_id'            => 'nullable|required_without:temp_phone|exists:security_guards,id',
+            'temp_phone'          => ['nullable', 'required_without:guard_id', 'string', 'max:32', 'regex:/^[0-9+()\-\s]{7,32}$/'],
+            'shift1_start'        => 'required|date_format:H:i',
+            'shift1_end'          => 'required|date_format:H:i',
+            'break_hours'         => 'required|numeric|in:0,0.25,0.5,0.75,1',
+            'shift1_postcode'     => 'nullable|string|max:255',
+            'shift1_site_name'    => 'nullable|string|max:255',
+            'shift1_site_address' => 'nullable|string|max:255',
+        ]);
+
+        $event = Event::findOrFail($data['event_id']);
+        $date  = Carbon::parse($data['date'])->toDateString();
+
+        if (($event->start_date && $date < $event->start_date->toDateString())
+            || ($event->end_date && $date > $event->end_date->toDateString())) {
+            return response()->json([
+                'message' => 'Validation error.',
+                'errors'  => ['date' => ['That date is outside the event dates.']],
+            ], 422);
+        }
+
+        DB::beginTransaction();
+
+        try {
+            $daily    = (array) ($event->daily_guards ?? []);
+            $maxSlot  = (int) EventAssignmentSlot::query()
+                ->where('event_id', $event->id)->whereDate('date', $date)->max('slot_no');
+            $slotNo   = max((int) ($daily[$date] ?? 0), $maxSlot) + 1;
+
+            $daily[$date] = $slotNo;
+            $event->daily_guards = $daily;
+            $event->save();
+
+            $request->merge(['date' => $date, 'slot_no' => $slotNo, 'source' => 'chaseup']);
+
+            $response = app(EventController::class)->saveGuardSlot($request, $event);
+
+            if ($response->getStatusCode() >= 400) {
+                DB::rollBack();
+                return $response;
+            }
+
+            DB::commit();
+
+            try {
+                \App\Services\NotificationService::notify(
+                    'chaseup',
+                    'Chaseup: shift added on ' . $event->event_name,
+                    'New shift on ' . $date . ' (slot ' . $slotNo . ').',
+                    route('chaseup.index', ['date' => $date], false),
+                    ['ops']
+                );
+            } catch (\Throwable $e) {
+                report($e);
+            }
+
+            return $response;
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            throw $e;
+        }
+    }
+
     public function updateField(Request $request, EventShift $eventShift)
     {
         $validated = $request->validate([
-            'field' => 'required|string|in:reminder,all_ok,all_ok_response,on_way,on_way_response,reaching_time,book_on,comments',
+            'field' => 'required|string|in:reminder,all_ok,all_ok_response,on_way,on_way_response,reaching_time,book_on,comments,approved_by,verified_by',
             'value' => 'nullable',
         ]);
 
@@ -211,7 +412,7 @@ class ChaseupController extends Controller
             $value = $value ? substr((string) $value, 0, 5) : null;
         }
 
-        if (in_array($field, ['reminder', 'all_ok_response', 'on_way_response', 'book_on', 'comments'], true)) {
+        if (in_array($field, ['reminder', 'all_ok_response', 'on_way_response', 'book_on', 'comments', 'approved_by', 'verified_by'], true)) {
             $value = $value !== null ? trim((string) $value) : null;
             if ($value === '') {
                 $value = null;

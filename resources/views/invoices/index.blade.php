@@ -28,6 +28,13 @@
         </div>
 
         <div class="flex items-center gap-3">
+            <select name="month" class="rounded-lg border border-gray-300 px-3 py-2 text-sm" onchange="this.form.submit()">
+                <option value="" @selected($month === '')>All months</option>
+                @foreach($monthOptions as $m)
+                    <option value="{{ $m }}" @selected($month === $m)>{{ \Carbon\Carbon::createFromFormat('Y-m', $m)->format('F Y') }}</option>
+                @endforeach
+            </select>
+
             <select name="per_page" class="rounded-lg border border-gray-300 px-3 py-2 text-sm">
                 @foreach([10, 20, 50, 100] as $n)
                     <option value="{{ $n }}" @selected((int)request('per_page', 20) === $n)>
@@ -40,7 +47,7 @@
                 Search
             </button>
 
-            @if(request('q') || request('per_page'))
+            @if(request('q') || request('per_page') || request()->has('month'))
                 <a href="{{ url()->current() }}" class="text-sm text-gray-600 hover:text-gray-900 hover:underline">
                     Clear
                 </a>
@@ -71,6 +78,9 @@
 
                             <td class="px-5 py-3 text-gray-700">
                                 {{ $invoice->event_name_snapshot ?? optional($invoice->event)->event_name ?? '—' }}
+                                @if($tempGuardEventIds->has((int) $invoice->event_id))
+                                    <span class="ml-1 inline-flex items-center rounded-full bg-amber-200 px-2 py-0.5 text-[10px] font-bold text-amber-900" title="Temporary guard on this event - invoice actions blocked">TEMP GUARD</span>
+                                @endif
                             </td>
 
                             <td class="px-5 py-3">
@@ -78,9 +88,10 @@
                                     {{ $invoice->status === 'draft' ? 'bg-yellow-50 text-yellow-800 border border-yellow-200' : '' }}
                                     {{ $invoice->status === 'issued' ? 'bg-blue-50 text-blue-800 border border-blue-200' : '' }}
                                     {{ $invoice->status === 'paid' ? 'bg-green-50 text-green-800 border border-green-200' : '' }}
+                                    {{ $invoice->status === 'staff_paid' ? 'bg-emerald-100 text-emerald-900 border border-emerald-300' : '' }}
                                     {{ $invoice->status === 'void' ? 'bg-gray-100 text-gray-700 border border-gray-200' : '' }}
                                 ">
-                                    {{ strtoupper($invoice->status) }}
+                                    {{ $invoice->statusLabel() }}
                                 </span>
                             </td>
 

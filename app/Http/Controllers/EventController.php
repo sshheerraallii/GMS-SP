@@ -73,7 +73,9 @@ class EventController extends Controller
             return $event;
         });
 
-        return view('events.index', compact('events', 'perPage'));
+        $tempGuardEventIds = Event::idsWithTempGuards()->flip();
+
+        return view('events.index', compact('events', 'perPage', 'tempGuardEventIds'));
     }
 
     public function create()
@@ -709,6 +711,7 @@ $locationValue = $assoc['location'] ?? $assoc['shift_location'] ?? $assoc['site_
             foreach ($dateSlots as $slot) {
                 $rows[] = [
                     'guard_id'            => $slot->guard_id,
+                    'temp_phone'          => $slot->temp_phone,
                     'shift1_start'        => $slot->start_time,
                     'shift1_end'          => $slot->end_time,
                     'break_hours'         => $slot->break_hours ?? 0,
@@ -722,6 +725,7 @@ $locationValue = $assoc['location'] ?? $assoc['shift_location'] ?? $assoc['site_
             while (count($rows) < $requiredCount) {
                 $rows[] = [
                     'guard_id'            => null,
+                    'temp_phone'          => null,
                     'shift1_start'        => null,
                     'shift1_end'          => null,
                     'break_hours'         => 0,
@@ -802,6 +806,11 @@ $locationValue = $assoc['location'] ?? $assoc['shift_location'] ?? $assoc['site_
                     ? (int) $row['guard_id']
                     : null;
 
+                // V4-P5: temp phone survives the bulk save; a real guard wins.
+                $assignments[$date][$i]['temp_phone'] = $assignments[$date][$i]['guard_id']
+                    ? null
+                    : $this->cleanTempPhone($row['temp_phone'] ?? null);
+
                 $assignments[$date][$i]['break_hours'] = isset($row['break_hours']) && $row['break_hours'] !== ''
                     ? (float) $row['break_hours']
                     : 0;
@@ -828,6 +837,7 @@ $locationValue = $assoc['location'] ?? $assoc['shift_location'] ?? $assoc['site_
             'assignments'                     => 'required|array',
             'assignments.*'                   => 'array',
             'assignments.*.*.guard_id'        => 'nullable|exists:security_guards,id',
+            'assignments.*.*.temp_phone'      => ['nullable', 'string', 'max:32', 'regex:/^[0-9+()\-\s]{7,32}$/'],
             'assignments.*.*.shift1_start'    => 'nullable|date_format:H:i',
            'assignments.*.*.shift1_end'      => 'nullable|date_format:H:i',
             'assignments.*.*.break_hours'     => 'nullable|numeric|in:0,0.25,0.5,0.75,1',
@@ -889,6 +899,8 @@ $locationValue = $assoc['location'] ?? $assoc['shift_location'] ?? $assoc['site_
             ])
             ->all();
 
+        $oldTempPhones = $event->assignmentSlots()->whereNotNull('temp_phone')->pluck('temp_phone')->all();
+
         $cancellationSnapshot = $this->snapshotCancellations($event);
 
         DB::transaction(function () use ($validated, $event, $requestedGuardIds, $oldLocationByDateGuard, $cancellationSnapshot) {
@@ -899,12 +911,13 @@ $locationValue = $assoc['location'] ?? $assoc['shift_location'] ?? $assoc['site_
             foreach ($validated['assignments'] as $date => $rows) {
                 foreach (array_values($rows) as $index => $row) {
                     $composed = $this->composeLocation($row['shift1_site_name'] ?? null, $row['shift1_postcode'] ?? null, $row['shift1_site_address'] ?? null);
-                    $finalLocation = $composed ?? (!empty($row['guard_id']) ? ($oldLocationByDateGuard[$date . '|' . (int) $row['guard_id']] ?? null) : null);
+                    $finalLocation = $composed ?? ((!empty($row['guard_id']) || !empty($row['temp_phone'])) ? ($oldLocationByDateGuard[$date . '|' . (int) $row['guard_id']] ?? null) : null);
 
                     $event->assignmentSlots()->create([
                         'date'          => $date,
                         'slot_no'       => $index + 1,
                         'guard_id'      => $row['guard_id'] ?? null,
+                        'temp_phone'    => $row['temp_phone'] ?? null,
                         'start_time'    => $row['shift1_start'] ?? null,
                         'end_time'      => $row['shift1_end'] ?? null,
                         'break_hours'   => $row['break_hours'] ?? 0,
@@ -949,6 +962,16 @@ $locationValue = $assoc['location'] ?? $assoc['shift_location'] ?? $assoc['site_
         });
 
         $event->load(['guards', 'shifts', 'assignmentSlots']);
+
+        try {
+            foreach ($event->assignmentSlots as $s) {
+                if ($s->temp_phone && !in_array($s->temp_phone, $oldTempPhones, true)) {
+                    $this->notifySlotChange($event, null, $s, $request);
+                }
+            }
+        } catch (\Throwable $e) {
+            report($e);
+        }
 
         $newGuards = $event->guards()
             ->pluck('security_guards.id')
@@ -1019,6 +1042,7 @@ $locationValue = $assoc['location'] ?? $assoc['shift_location'] ?? $assoc['site_
         'date'            => 'required|date',
         'slot_no'         => 'required|integer|min:1',
         'guard_id'        => 'nullable|exists:security_guards,id',
+        'temp_phone'      => ['nullable', 'string', 'max:32', 'regex:/^[0-9+()\-\s]{7,32}$/'],
         'shift1_start'    => 'nullable|date_format:H:i',
         'shift1_end'      => 'nullable|date_format:H:i',
         'break_hours'     => 'nullable|numeric|in:0,0.25,0.5,0.75,1',
@@ -1030,6 +1054,9 @@ $locationValue = $assoc['location'] ?? $assoc['shift_location'] ?? $assoc['site_
     $date = $validated['date'];
     $slotNo = (int) $validated['slot_no'];
     $guardId = $validated['guard_id'] ?? null;
+
+    // V4-P5: a real guard always wins; a temp phone only lives on a guard-less slot.
+    $tempPhone = $guardId ? null : $this->cleanTempPhone($validated['temp_phone'] ?? null);
 
     $startTime = $validated['shift1_start'] ?? null;
     $endTime = $validated['shift1_end'] ?? null;
@@ -1089,11 +1116,11 @@ $locationValue = $assoc['location'] ?? $assoc['shift_location'] ?? $assoc['site_
     // Compose location; fall back to the existing slot's legacy location
     // when the 3 site fields are empty (grandfathering).
     $composed = $this->composeLocation($siteName, $sitePostcode, $siteAddress);
-    $location = $composed ?? ($guardId ? optional($oldSlot)->location : null);
+    $location = $composed ?? (($guardId || $tempPhone) ? optional($oldSlot)->location : null);
 
     $cancellationSnapshot = $this->snapshotCancellations($event);
 
-    DB::transaction(function () use ($event, $date, $slotNo, $guardId, $startTime, $endTime, $breakHours, $location, $sitePostcode, $siteName, $siteAddress, $cancellationSnapshot) {
+    DB::transaction(function () use ($event, $date, $slotNo, $guardId, $tempPhone, $startTime, $endTime, $breakHours, $location, $sitePostcode, $siteName, $siteAddress, $cancellationSnapshot) {
         $event->assignmentSlots()->updateOrCreate(
             [
                 'event_id' => $event->id,
@@ -1102,6 +1129,7 @@ $locationValue = $assoc['location'] ?? $assoc['shift_location'] ?? $assoc['site_
             ],
             [
                 'guard_id'      => $guardId,
+                'temp_phone'    => $tempPhone,
                 'start_time'    => $startTime,
                 'end_time'      => $endTime,
                 'break_hours'   => $breakHours,
@@ -1152,6 +1180,8 @@ $locationValue = $assoc['location'] ?? $assoc['shift_location'] ?? $assoc['site_
         ->where('slot_no', $slotNo)
         ->first();
 
+    $this->notifySlotChange($event, $oldSlot, $newSlot, $request);
+
     Audit::log(
         'assignment_slot_saved',
         Event::class,
@@ -1161,6 +1191,7 @@ $locationValue = $assoc['location'] ?? $assoc['shift_location'] ?? $assoc['site_
             'date'        => optional($newSlot->date)->toDateString(),
             'slot_no'     => (int) $newSlot->slot_no,
             'guard_id'    => $newSlot->guard_id ? (int) $newSlot->guard_id : null,
+            'temp_phone'  => $newSlot->temp_phone,
             'start_time'  => $newSlot->start_time ? substr((string) $newSlot->start_time, 0, 5) : null,
             'end_time'    => $newSlot->end_time ? substr((string) $newSlot->end_time, 0, 5) : null,
             'break_hours' => $newSlot->break_hours !== null ? (float) $newSlot->break_hours : 0,
@@ -1176,6 +1207,49 @@ $locationValue = $assoc['location'] ?? $assoc['shift_location'] ?? $assoc['site_
 }
 
     
+    /** V4-P6: bell (+ email for temp guards) after a slot save. Never throws. */
+    private function notifySlotChange(Event $event, $oldSlot, $newSlot, Request $request): void
+    {
+        try {
+            $url   = route('events.show', $event, false);
+            $dateL = optional($newSlot->date)->format('d M Y');
+            $fromChaseup = $request->input('source') === 'chaseup';
+
+            if ($newSlot->temp_phone && (!$oldSlot || $oldSlot->temp_phone !== $newSlot->temp_phone)) {
+                \App\Services\NotificationService::notify(
+                    'temp_guard',
+                    'Temporary guard on ' . $event->event_name,
+                    'Phone ' . $newSlot->temp_phone . ' assigned for ' . $dateL . ' (slot ' . $newSlot->slot_no . '). Invoices and guard payments are blocked for this event until a real guard replaces them.',
+                    $url,
+                    ['finance', 'ops'],
+                    'temp|' . $event->id . '|' . optional($newSlot->date)->toDateString() . '|' . $newSlot->slot_no . '|' . preg_replace('/\D+/', '', $newSlot->temp_phone),
+                    true
+                );
+            }
+
+            if ($fromChaseup && $newSlot->guard_id && (!$oldSlot || (int) $oldSlot->guard_id !== (int) $newSlot->guard_id)) {
+                $guard = SecurityGuard::find($newSlot->guard_id, ['id', 'fullname']);
+                \App\Services\NotificationService::notify(
+                    'chaseup',
+                    'Chaseup: guard assigned on ' . $event->event_name,
+                    ($guard->fullname ?? 'Guard') . ' assigned for ' . $dateL . ' (slot ' . $newSlot->slot_no . ').',
+                    route('chaseup.index', ['date' => optional($newSlot->date)->toDateString()], false),
+                    ['ops']
+                );
+            }
+        } catch (\Throwable $e) {
+            report($e);
+        }
+    }
+
+    /** V4-P5: trim a temp-guard phone; blank -> null. */
+    private function cleanTempPhone(?string $phone): ?string
+    {
+        $phone = trim((string) $phone);
+
+        return $phone !== '' ? preg_replace('/\s+/', ' ', $phone) : null;
+    }
+
     public function additionalDaysPreview(Request $request, Event $event)
 {
     $request->validate([
@@ -1541,7 +1615,7 @@ private function syncImportedSlotShift(Event $event, string $date, int $slotNo):
          */
         $clientInvoiceLocked = Invoice::query()
             ->where('event_id', $event->id)
-            ->whereIn('status', ['issued', 'paid'])
+            ->whereIn('status', ['issued', 'paid', 'staff_paid'])
             ->exists();
 
         $lockedGuardInvoiceIds = GuardInvoice::query()
@@ -1581,7 +1655,11 @@ private function syncImportedSlotShift(Event $event, string $date, int $slotNo):
 
                 $rowIssues = [];
 
-                if (!$slot || !$slot->guard_id) {
+                $isTemp = $slot && !$slot->guard_id && $slot->temp_phone;
+
+                if ($isTemp) {
+                    $rowIssues[] = 'Temporary guard';
+                } elseif (!$slot || !$slot->guard_id) {
                     $rowIssues[] = 'Guard missing';
                 }
                 if (!$slot || !$slot->start_time) {
@@ -1601,7 +1679,8 @@ private function syncImportedSlotShift(Event $event, string $date, int $slotNo):
     'date'        => $date,
     'slot_no'     => $i,
     'guard_id'    => $slot?->guard_id,
-    'guard'       => $guardName ?: '—',
+    'guard'       => $guardName ?: ($isTemp ? 'TEMP ' . $slot->temp_phone : '—'),
+    'temp_phone'  => $isTemp ? $slot->temp_phone : null,
     'license'     => $licenseNumber ?: '—',
     'start'       => $slot?->start_time ? substr((string) $slot->start_time, 0, 5) : '—',
     'end'         => $slot?->end_time ? substr((string) $slot->end_time, 0, 5) : '—',

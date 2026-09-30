@@ -7,7 +7,20 @@
     $panelShow = $panelShow ?? ('open === ' . $ev['id']);
 @endphp
                     <tr class="hover:bg-gray-50" @if($rowShow) x-show="{{ $rowShow }}" x-cloak @endif>
-                        <td class="px-3 py-2 font-medium text-gray-900">{{ $ev['event_name'] }}</td>
+                        <td class="px-3 py-2 font-medium text-gray-900">
+                            {{ $ev['event_name'] }}
+                            @if(!empty($ev['invoice_status']))
+                                @php
+                                    $isCls = ['draft'=>'bg-yellow-50 text-yellow-800','issued'=>'bg-blue-50 text-blue-800','paid'=>'bg-green-50 text-green-800','staff_paid'=>'bg-emerald-100 text-emerald-900','void'=>'bg-gray-100 text-gray-700'][$ev['invoice_status']] ?? 'bg-gray-100 text-gray-700';
+                                @endphp
+                                <span class="ml-1 inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium {{ $isCls }}">{{ \App\Models\Invoice::STATUS_LABELS[$ev['invoice_status']] ?? $ev['invoice_status'] }}</span>
+                            @else
+                                <span class="ml-1 text-[10px] text-gray-400">no invoice</span>
+                            @endif
+                            @if(!empty($ev['has_temp_guard']))
+                                <span class="ml-1 inline-flex rounded-full bg-amber-200 px-2 py-0.5 text-[10px] font-bold text-amber-900" title="Temporary guard - invoices blocked">TEMP GUARD</span>
+                            @endif
+                        </td>
                         <td class="px-3 py-2">{{ $ev['client_name'] }}</td>
                         <td class="px-3 py-2 text-right tabular-nums">{{ number_format($ev['hours'], 2) }}</td>
                         <td class="px-3 py-2 text-right tabular-nums">

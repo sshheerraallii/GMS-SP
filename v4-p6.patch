@@ -1,0 +1,816 @@
+diff --git a/app/Http/Controllers/ChaseupController.php b/app/Http/Controllers/ChaseupController.php
+index e2954da..52528a2 100644
+--- a/app/Http/Controllers/ChaseupController.php
++++ b/app/Http/Controllers/ChaseupController.php
+@@ -362,7 +362,7 @@ public function addShift(Request $request)
+             $event->daily_guards = $daily;
+             $event->save();
+ 
+-            $request->merge(['date' => $date, 'slot_no' => $slotNo]);
++            $request->merge(['date' => $date, 'slot_no' => $slotNo, 'source' => 'chaseup']);
+ 
+             $response = app(EventController::class)->saveGuardSlot($request, $event);
+ 
+@@ -373,6 +373,18 @@ public function addShift(Request $request)
+ 
+             DB::commit();
+ 
++            try {
++                \App\Services\NotificationService::notify(
++                    'chaseup',
++                    'Chaseup: shift added on ' . $event->event_name,
++                    'New shift on ' . $date . ' (slot ' . $slotNo . ').',
++                    route('chaseup.index', ['date' => $date], false),
++                    ['ops']
++                );
++            } catch (\Throwable $e) {
++                report($e);
++            }
++
+             return $response;
+         } catch (\Throwable $e) {
+             DB::rollBack();
+diff --git a/app/Http/Controllers/EventController.php b/app/Http/Controllers/EventController.php
+index f81fe2c..3a7b35d 100644
+--- a/app/Http/Controllers/EventController.php
++++ b/app/Http/Controllers/EventController.php
+@@ -899,6 +899,8 @@ public function updateGuards(Request $request, Event $event)
+             ])
+             ->all();
+ 
++        $oldTempPhones = $event->assignmentSlots()->whereNotNull('temp_phone')->pluck('temp_phone')->all();
++
+         $cancellationSnapshot = $this->snapshotCancellations($event);
+ 
+         DB::transaction(function () use ($validated, $event, $requestedGuardIds, $oldLocationByDateGuard, $cancellationSnapshot) {
+@@ -961,6 +963,16 @@ public function updateGuards(Request $request, Event $event)
+ 
+         $event->load(['guards', 'shifts', 'assignmentSlots']);
+ 
++        try {
++            foreach ($event->assignmentSlots as $s) {
++                if ($s->temp_phone && !in_array($s->temp_phone, $oldTempPhones, true)) {
++                    $this->notifySlotChange($event, null, $s, $request);
++                }
++            }
++        } catch (\Throwable $e) {
++            report($e);
++        }
++
+         $newGuards = $event->guards()
+             ->pluck('security_guards.id')
+             ->map(fn ($id) => (int) $id)
+@@ -1168,6 +1180,8 @@ public function saveGuardSlot(Request $request, Event $event)
+         ->where('slot_no', $slotNo)
+         ->first();
+ 
++    $this->notifySlotChange($event, $oldSlot, $newSlot, $request);
++
+     Audit::log(
+         'assignment_slot_saved',
+         Event::class,
+@@ -1193,6 +1207,41 @@ public function saveGuardSlot(Request $request, Event $event)
+ }
+ 
+     
++    /** V4-P6: bell (+ email for temp guards) after a slot save. Never throws. */
++    private function notifySlotChange(Event $event, $oldSlot, $newSlot, Request $request): void
++    {
++        try {
++            $url   = route('events.show', $event, false);
++            $dateL = optional($newSlot->date)->format('d M Y');
++            $fromChaseup = $request->input('source') === 'chaseup';
++
++            if ($newSlot->temp_phone && (!$oldSlot || $oldSlot->temp_phone !== $newSlot->temp_phone)) {
++                \App\Services\NotificationService::notify(
++                    'temp_guard',
++                    'Temporary guard on ' . $event->event_name,
++                    'Phone ' . $newSlot->temp_phone . ' assigned for ' . $dateL . ' (slot ' . $newSlot->slot_no . '). Invoices and guard payments are blocked for this event until a real guard replaces them.',
++                    $url,
++                    ['finance', 'ops'],
++                    'temp|' . $event->id . '|' . optional($newSlot->date)->toDateString() . '|' . $newSlot->slot_no . '|' . preg_replace('/\D+/', '', $newSlot->temp_phone),
++                    true
++                );
++            }
++
++            if ($fromChaseup && $newSlot->guard_id && (!$oldSlot || (int) $oldSlot->guard_id !== (int) $newSlot->guard_id)) {
++                $guard = SecurityGuard::find($newSlot->guard_id, ['id', 'fullname']);
++                \App\Services\NotificationService::notify(
++                    'chaseup',
++                    'Chaseup: guard assigned on ' . $event->event_name,
++                    ($guard->fullname ?? 'Guard') . ' assigned for ' . $dateL . ' (slot ' . $newSlot->slot_no . ').',
++                    route('chaseup.index', ['date' => optional($newSlot->date)->toDateString()], false),
++                    ['ops']
++                );
++            }
++        } catch (\Throwable $e) {
++            report($e);
++        }
++    }
++
+     /** V4-P5: trim a temp-guard phone; blank -> null. */
+     private function cleanTempPhone(?string $phone): ?string
+     {
+diff --git a/app/Http/Controllers/InvoiceController.php b/app/Http/Controllers/InvoiceController.php
+index e56574a..340fcd4 100644
+--- a/app/Http/Controllers/InvoiceController.php
++++ b/app/Http/Controllers/InvoiceController.php
+@@ -249,11 +249,30 @@ public function issue(Invoice $invoice)
+             ]);
+         });
+ 
++        $this->notifyInvoice($invoice, 'issued');
++
+         return redirect()
+             ->route('invoices.show', $invoice)
+             ->with('success', 'Invoice issued and PDF generated.');
+     }
+ 
++    /** V4-P6: bell notice on invoice status change. Never throws. */
++    private function notifyInvoice(Invoice $invoice, string $status): void
++    {
++        try {
++            $label = Invoice::STATUS_LABELS[$status] ?? ucfirst($status);
++            \App\Services\NotificationService::notify(
++                'invoice',
++                'Invoice ' . $invoice->invoice_number . ': ' . $label,
++                (optional($invoice->event)->event_name ?: 'Event') . ' — status changed to ' . $label . ' by ' . (auth()->user()->name ?? 'a user') . '.',
++                route('invoices.show', $invoice, false),
++                ['finance']
++            );
++        } catch (\Throwable $e) {
++            report($e);
++        }
++    }
++
+     /**
+      * V4-P2: manual status move — Issued / Paid / Staff payments done, in
+      * any order. Deliberate limits:
+@@ -290,6 +309,8 @@ public function updateStatus(Request $request, Invoice $invoice)
+             : null;
+         $invoice->save();
+ 
++        $this->notifyInvoice($invoice, $new);
++
+         return back()->with('success', 'Invoice ' . $invoice->invoice_number . ' set to ' . Invoice::STATUS_LABELS[$new] . '.');
+     }
+ 
+diff --git a/app/Http/Controllers/NotificationController.php b/app/Http/Controllers/NotificationController.php
+new file mode 100644
+index 0000000..debaca9
+--- /dev/null
++++ b/app/Http/Controllers/NotificationController.php
+@@ -0,0 +1,71 @@
++<?php
++
++namespace App\Http\Controllers;
++
++use App\Models\AppNotification;
++use App\Services\PayDateNotifier;
++use Illuminate\Support\Facades\DB;
++
++/** V4-P6: bell feed, list page, read state. */
++class NotificationController extends Controller
++{
++    public function feed()
++    {
++        $user = auth()->user();
++
++        try {
++            PayDateNotifier::run();
++        } catch (\Throwable $e) {
++            report($e);
++        }
++
++        $unread = AppNotification::unreadFor($user)->count();
++        $readIds = DB::table('app_notification_reads')->where('user_id', $user->id)->pluck('notification_id')->flip();
++
++        $items = AppNotification::visibleTo($user)->orderByDesc('id')->limit(10)->get()
++            ->map(fn ($n) => [
++                'id'     => $n->id,
++                'type'   => $n->type,
++                'title'  => $n->title,
++                'body'   => $n->body,
++                'url'    => $n->url,
++                'read'   => isset($readIds[$n->id]),
++                'when'   => $n->created_at->timezone('Europe/London')->format('d M H:i'),
++            ]);
++
++        return response()->json(['unread' => $unread, 'items' => $items]);
++    }
++
++    public function index()
++    {
++        $user = auth()->user();
++        $notifications = AppNotification::visibleTo($user)->orderByDesc('id')->paginate(30);
++        $readIds = DB::table('app_notification_reads')->where('user_id', $user->id)->pluck('notification_id')->flip();
++
++        return view('notifications.index', compact('notifications', 'readIds'));
++    }
++
++    public function read(int $id)
++    {
++        $user = auth()->user();
++        $n = AppNotification::visibleTo($user)->whereKey($id)->first();
++        if ($n) {
++            DB::table('app_notification_reads')->updateOrInsert(
++                ['user_id' => $user->id, 'notification_id' => $n->id],
++                ['read_at' => now()]
++            );
++        }
++        return response()->json(['ok' => true]);
++    }
++
++    public function readAll()
++    {
++        $user = auth()->user();
++        $ids = AppNotification::unreadFor($user)->pluck('app_notifications.id');
++        $rows = $ids->map(fn ($i) => ['user_id' => $user->id, 'notification_id' => $i, 'read_at' => now()])->all();
++        if ($rows) {
++            DB::table('app_notification_reads')->insertOrIgnore($rows);
++        }
++        return request()->wantsJson() ? response()->json(['ok' => true]) : back();
++    }
++}
+diff --git a/app/Http/Controllers/UserManagementController.php b/app/Http/Controllers/UserManagementController.php
+index 3e17887..b04d358 100644
+--- a/app/Http/Controllers/UserManagementController.php
++++ b/app/Http/Controllers/UserManagementController.php
+@@ -40,6 +40,16 @@ public function destroy(\App\Models\User $user)
+ 
+ 
+ 
++    /** V4-P6: set / clear the optional real email used for critical alerts. */
++    public function updateContactEmail(Request $request, User $user)
++    {
++        $data = $request->validate(['contact_email' => 'nullable|email|max:255']);
++        $user->contact_email = ($data['contact_email'] ?? '') !== '' ? $data['contact_email'] : null;
++        $user->save();
++
++        return back()->with('success', 'Contact email updated for ' . $user->name . '.');
++    }
++
+     public function store(Request $request)
+     {
+         $validated = $request->validate([
+@@ -49,6 +59,7 @@ public function store(Request $request)
+             // We'll store this in users.email (acts as username/login). Keep it unique.
+             'username'   => 'required|string|max:255|unique:users,email',
+ 
++            'contact_email' => 'nullable|email|max:255',
+             'password'   => 'required|string|min:8|max:255',
+             'role'       => 'required|exists:roles,name',
+         ]);
+@@ -56,6 +67,7 @@ public function store(Request $request)
+         $user = User::create([
+             'name'     => trim($validated['first_name'] . ' ' . $validated['last_name']),
+             'email'    => $validated['username'],
++            'contact_email' => $validated['contact_email'] ?? null,
+             'password' => Hash::make($validated['password']),
+         ]);
+ 
+diff --git a/app/Models/AppNotification.php b/app/Models/AppNotification.php
+new file mode 100644
+index 0000000..2bc38e7
+--- /dev/null
++++ b/app/Models/AppNotification.php
+@@ -0,0 +1,51 @@
++<?php
++
++namespace App\Models;
++
++use Illuminate\Database\Eloquent\Model;
++
++/** V4-P6: in-app notification (shared row, per-user read state). */
++class AppNotification extends Model
++{
++    protected $table = 'app_notifications';
++
++    protected $fillable = ['type', 'title', 'body', 'url', 'audience', 'dedupe_key', 'emailed_at'];
++
++    protected $casts = ['emailed_at' => 'datetime'];
++
++    /** Audience tags the given user belongs to. */
++    public static function audiencesFor(User $user): array
++    {
++        $tags = ['all'];
++        if ($user->hasAnyRole(['Super Admin', 'Admin', 'Accountant'])) {
++            $tags[] = 'finance';
++        }
++        if ($user->can('shifts.assign')) {
++            $tags[] = 'ops';
++        }
++        return $tags;
++    }
++
++    public static function visibleTo(User $user)
++    {
++        $tags = self::audiencesFor($user);
++
++        return static::query()
++            ->where('created_at', '>=', $user->created_at ?? now()->subYear())
++            ->where(function ($q) use ($tags) {
++                foreach ($tags as $t) {
++                    $q->orWhere('audience', 'like', '%,' . $t . ',%');
++                }
++            });
++    }
++
++    public static function unreadFor(User $user)
++    {
++        return static::visibleTo($user)->whereNotExists(function ($q) use ($user) {
++            $q->select(\DB::raw(1))
++                ->from('app_notification_reads as r')
++                ->whereColumn('r.notification_id', 'app_notifications.id')
++                ->where('r.user_id', $user->id);
++        });
++    }
++}
+diff --git a/app/Models/User.php b/app/Models/User.php
+index 0ee52f6..cffb0a9 100644
+--- a/app/Models/User.php
++++ b/app/Models/User.php
+@@ -21,6 +21,7 @@ class User extends Authenticatable
+     protected $fillable = [
+         'name',
+         'email',
++        'contact_email',
+         'password',
+     ];
+ 
+diff --git a/app/Services/NotificationService.php b/app/Services/NotificationService.php
+new file mode 100644
+index 0000000..7ff5aab
+--- /dev/null
++++ b/app/Services/NotificationService.php
+@@ -0,0 +1,105 @@
++<?php
++
++namespace App\Services;
++
++use App\Models\AppNotification;
++use App\Models\User;
++use Illuminate\Database\QueryException;
++use Illuminate\Support\Facades\Http;
++use Illuminate\Support\Facades\Log;
++
++/**
++ * V4-P6: creates in-app notifications and (optionally) a critical email
++ * via the Resend HTTP API. Never throws: a notification/email problem must
++ * not break the action that triggered it.
++ */
++class NotificationService
++{
++    /**
++     * @param array<int,string> $audience  any of: all, finance, ops
++     * @return AppNotification|null null when it was a duplicate or failed
++     */
++    public static function notify(
++        string $type,
++        string $title,
++        ?string $body = null,
++        ?string $url = null,
++        array $audience = ['all'],
++        ?string $dedupeKey = null,
++        bool $email = false
++    ): ?AppNotification {
++        try {
++            $n = AppNotification::create([
++                'type'       => $type,
++                'title'      => mb_substr($title, 0, 255),
++                'body'       => $body,
++                'url'        => $url ? mb_substr($url, 0, 500) : null,
++                'audience'   => ',' . implode(',', $audience) . ',',
++                'dedupe_key' => $dedupeKey ? mb_substr($dedupeKey, 0, 191) : null,
++            ]);
++        } catch (QueryException $e) {
++            return null; // duplicate dedupe_key (or DB problem): stay silent
++        } catch (\Throwable $e) {
++            Log::warning('Notification create failed: ' . $e->getMessage());
++            return null;
++        }
++
++        if ($email) {
++            self::emailCritical($n);
++        }
++
++        return $n;
++    }
++
++    /** Super Admin + Accountant users who have a contact email. */
++    public static function emailRecipients(): array
++    {
++        return User::query()
++            ->whereNotNull('contact_email')
++            ->where('contact_email', '!=', '')
++            ->get()
++            ->filter(fn ($u) => $u->hasAnyRole(['Super Admin', 'Accountant']))
++            ->pluck('contact_email')
++            ->unique()
++            ->values()
++            ->all();
++    }
++
++    private static function emailCritical(AppNotification $n): void
++    {
++        $key  = config('services.resend.key');
++        $from = config('services.resend.from');
++        if (!$key || !$from) {
++            return; // email stays off until configured
++        }
++
++        $to = self::emailRecipients();
++        if (!$to) {
++            return;
++        }
++
++        try {
++            $link = $n->url ? url($n->url) : null;
++            $html = '<p><strong>' . e($n->title) . '</strong></p>'
++                . ($n->body ? '<p>' . nl2br(e($n->body)) . '</p>' : '')
++                . ($link ? '<p><a href="' . e($link) . '">Open in GMS</a></p>' : '');
++
++            $res = Http::withToken($key)
++                ->timeout(8)
++                ->post('https://api.resend.com/emails', [
++                    'from'    => $from,
++                    'to'      => array_slice($to, 0, 50),
++                    'subject' => '[GMS] ' . $n->title,
++                    'html'    => $html,
++                ]);
++
++            if ($res->successful()) {
++                $n->forceFill(['emailed_at' => now()])->save();
++            } else {
++                Log::warning('Resend email failed: ' . $res->status() . ' ' . $res->body());
++            }
++        } catch (\Throwable $e) {
++            Log::warning('Resend email error: ' . $e->getMessage());
++        }
++    }
++}
+diff --git a/app/Services/PayDateNotifier.php b/app/Services/PayDateNotifier.php
+new file mode 100644
+index 0000000..449c2a4
+--- /dev/null
++++ b/app/Services/PayDateNotifier.php
+@@ -0,0 +1,62 @@
++<?php
++
++namespace App\Services;
++
++use App\Models\Event;
++use Illuminate\Support\Facades\Cache;
++use Illuminate\Support\Facades\DB;
++
++/**
++ * V4-P6: on the staff_pay_date itself, notify (bell + email) for events
++ * that still have unpaid guards. No cron: triggered by the bell feed poll,
++ * throttled, and de-duplicated per (event, pay date).
++ */
++class PayDateNotifier
++{
++    public static function run(): void
++    {
++        $today = now('Europe/London')->toDateString();
++
++        // At most one check every 10 minutes across all users.
++        if (!Cache::add('paydate-notifier-' . $today, 1, now()->addMinutes(10))) {
++            return;
++        }
++
++        $events = Event::query()
++            ->whereNotNull('staff_pay_date')
++            ->whereDate('staff_pay_date', $today)
++            ->get(['id', 'event_name', 'staff_pay_date']);
++
++        foreach ($events as $event) {
++            $guardIds = DB::table('event_shifts')
++                ->where('event_id', $event->id)
++                ->whereNull('cancelled_at')
++                ->whereNotNull('guard_id')
++                ->distinct()->pluck('guard_id')->map(fn ($i) => (int) $i);
++
++            if ($guardIds->isEmpty()) {
++                continue;
++            }
++
++            $paid = DB::table('event_guard_payments')
++                ->where('event_id', $event->id)
++                ->whereNotNull('paid_on')
++                ->distinct()->pluck('guard_id')->map(fn ($i) => (int) $i);
++
++            $due = $guardIds->diff($paid)->count();
++            if ($due === 0) {
++                continue;
++            }
++
++            NotificationService::notify(
++                'pay_date',
++                'Staff pay date today: ' . $event->event_name,
++                $due . ' of ' . $guardIds->count() . ' guard(s) still unpaid.',
++                route('events.guardPayments.index', $event->id, false),
++                ['finance'],
++                'paydate|' . $event->id . '|' . $today,
++                true
++            );
++        }
++    }
++}
+diff --git a/config/services.php b/config/services.php
+index 0ace530..aa37635 100644
+--- a/config/services.php
++++ b/config/services.php
+@@ -21,6 +21,12 @@
+         'scheme' => 'https',
+     ],
+ 
++    // V4-P6: Resend (critical emails only). Off until both are set in .env.
++    'resend' => [
++        'key'  => env('RESEND_API_KEY'),
++        'from' => env('RESEND_FROM'),
++    ],
++
+     'postmark' => [
+         'token' => env('POSTMARK_TOKEN'),
+     ],
+diff --git a/database/migrations/2026_09_30_150000_create_app_notifications.php b/database/migrations/2026_09_30_150000_create_app_notifications.php
+new file mode 100644
+index 0000000..6a677f1
+--- /dev/null
++++ b/database/migrations/2026_09_30_150000_create_app_notifications.php
+@@ -0,0 +1,51 @@
++<?php
++
++use Illuminate\Database\Migrations\Migration;
++use Illuminate\Database\Schema\Blueprint;
++use Illuminate\Support\Facades\Schema;
++
++return new class extends Migration
++{
++    public function up(): void
++    {
++        // V4-P6: optional real email (users.email is the login username).
++        if (!Schema::hasColumn('users', 'contact_email')) {
++            Schema::table('users', function (Blueprint $table) {
++                $table->string('contact_email', 255)->nullable()->after('email');
++            });
++        }
++
++        Schema::create('app_notifications', function (Blueprint $table) {
++            $table->id();
++            $table->string('type', 40);
++            $table->string('title', 255);
++            $table->text('body')->nullable();
++            $table->string('url', 500)->nullable();
++            // ",finance,ops," style list; "," + "all" + "," = everyone.
++            $table->string('audience', 100)->default(',all,');
++            $table->string('dedupe_key', 191)->nullable()->unique();
++            $table->timestamp('emailed_at')->nullable();
++            $table->timestamps();
++            $table->index('created_at');
++        });
++
++        Schema::create('app_notification_reads', function (Blueprint $table) {
++            $table->id();
++            $table->unsignedBigInteger('user_id');
++            $table->unsignedBigInteger('notification_id');
++            $table->timestamp('read_at')->useCurrent();
++            $table->unique(['user_id', 'notification_id']);
++        });
++    }
++
++    public function down(): void
++    {
++        Schema::dropIfExists('app_notification_reads');
++        Schema::dropIfExists('app_notifications');
++        if (Schema::hasColumn('users', 'contact_email')) {
++            Schema::table('users', function (Blueprint $table) {
++                $table->dropColumn('contact_email');
++            });
++        }
++    }
++};
+diff --git a/resources/views/chaseup/index.blade.php b/resources/views/chaseup/index.blade.php
+index afa6e27..646d647 100644
+--- a/resources/views/chaseup/index.blade.php
++++ b/resources/views/chaseup/index.blade.php
+@@ -757,6 +757,7 @@ function chaseupPage(config) {
+                 shift1_site_name: m.siteName,
+                 shift1_postcode: m.postcode,
+                 shift1_site_address: m.siteAddress,
++                source: 'chaseup',
+             };
+ 
+             let url;
+diff --git a/resources/views/layouts/default.blade.php b/resources/views/layouts/default.blade.php
+index 064dd34..b107e71 100644
+--- a/resources/views/layouts/default.blade.php
++++ b/resources/views/layouts/default.blade.php
+@@ -212,6 +212,7 @@ class="{{ $navBase }} {{ request()->routeIs('users.*') ? $active : $idle }}">
+ 
+             <!-- Right: User + Logout (Desktop) -->
+             <div class="hidden md:flex items-center gap-3">
++                @include('partials.notification-bell')
+                 <div class="text-sm text-gray-200">
+                     <span class="font-medium text-white">{{ Auth::user()->name }}</span>
+                 </div>
+@@ -228,6 +229,7 @@ class="bg-gray-700 hover:bg-gray-600 text-white px-3 py-2 rounded-md text-sm fon
+ 
+             <!-- Mobile: Menu Button -->
+             <div class="md:hidden flex items-center gap-2">
++                @include('partials.notification-bell')
+                 <button type="button"
+                         @click="mobileOpen = !mobileOpen"
+                         class="inline-flex items-center justify-center rounded-md px-3 py-2 text-gray-200 hover:text-white hover:bg-gray-700 transition focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 focus:ring-offset-gray-800"
+diff --git a/resources/views/notifications/index.blade.php b/resources/views/notifications/index.blade.php
+new file mode 100644
+index 0000000..63e93ce
+--- /dev/null
++++ b/resources/views/notifications/index.blade.php
+@@ -0,0 +1,42 @@
++@extends('layouts.default')
++
++@section('content')
++<div class="container mx-auto p-4 max-w-3xl">
++    <div class="flex items-center justify-between mb-4">
++        <h2 class="text-2xl font-bold">Notifications</h2>
++        <form method="POST" action="{{ route('notifications.readAll') }}">
++            @csrf
++            <button class="bg-gray-700 text-white px-3 py-2 rounded text-sm hover:bg-gray-800">Mark all read</button>
++        </form>
++    </div>
++
++    <div class="bg-white shadow rounded divide-y">
++        @forelse ($notifications as $n)
++            <a href="{{ $n->url ?: '#' }}" data-nid="{{ $n->id }}"
++               class="block px-4 py-3 hover:bg-gray-50 {{ isset($readIds[$n->id]) ? 'opacity-60' : '' }}">
++                <div class="flex justify-between gap-3">
++                    <span class="font-medium">{{ $n->title }}</span>
++                    <span class="text-xs text-gray-500 whitespace-nowrap">{{ $n->created_at->timezone('Europe/London')->format('d M Y H:i') }}</span>
++                </div>
++                @if ($n->body)
++                    <div class="text-sm text-gray-600 mt-1">{{ $n->body }}</div>
++                @endif
++            </a>
++        @empty
++            <div class="px-4 py-6 text-center text-gray-500">No notifications yet.</div>
++        @endforelse
++    </div>
++
++    <div class="mt-4">{{ $notifications->links() }}</div>
++</div>
++<script>
++document.querySelectorAll('[data-nid]').forEach(function (a) {
++    a.addEventListener('click', function () {
++        fetch(@js(url('/notifications')) + '/' + a.dataset.nid + '/read', {
++            method: 'POST', keepalive: true,
++            headers: {'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content, 'Accept': 'application/json'}
++        });
++    });
++});
++</script>
++@endsection
+diff --git a/resources/views/partials/notification-bell.blade.php b/resources/views/partials/notification-bell.blade.php
+new file mode 100644
+index 0000000..91fe304
+--- /dev/null
++++ b/resources/views/partials/notification-bell.blade.php
+@@ -0,0 +1,56 @@
++{{-- V4-P6: notification bell (polls /notifications/feed every 60s). --}}
++<div class="relative" x-data="notifBell()" x-init="load(); setInterval(() => load(), 60000)" @click.outside="open = false">
++    <button type="button" @click="open = !open; if (open) load()"
++            class="relative rounded-md px-2 py-2 text-gray-200 hover:text-white hover:bg-gray-700 focus:outline-none" aria-label="Notifications">
++        <span class="text-lg">🔔</span>
++        <span x-show="unread > 0" x-text="unread > 99 ? '99+' : unread" x-cloak
++              class="absolute -top-0.5 -right-0.5 min-w-[1.1rem] rounded-full bg-red-600 px-1 text-center text-[10px] font-bold leading-[1.1rem] text-white"></span>
++    </button>
++
++    <div x-show="open" x-cloak
++         class="absolute right-0 z-[9998] mt-2 w-80 max-w-[90vw] rounded-md bg-white text-gray-800 shadow-lg ring-1 ring-black/10">
++        <div class="flex items-center justify-between border-b px-3 py-2 text-sm">
++            <span class="font-semibold">Notifications</span>
++            <button type="button" @click="markAll()" class="text-xs text-blue-600 hover:underline">Mark all read</button>
++        </div>
++        <div class="max-h-96 overflow-y-auto divide-y">
++            <template x-for="n in items" :key="n.id">
++                <a :href="n.url || '#'" @click="markOne(n)" class="block px-3 py-2 text-sm hover:bg-gray-50" :class="n.read ? 'opacity-60' : ''">
++                    <div class="font-medium" x-text="n.title"></div>
++                    <div class="text-xs text-gray-600" x-show="n.body" x-text="n.body"></div>
++                    <div class="text-[11px] text-gray-400" x-text="n.when"></div>
++                </a>
++            </template>
++            <div x-show="items.length === 0" class="px-3 py-4 text-center text-sm text-gray-500">No notifications yet.</div>
++        </div>
++        <a href="{{ route('notifications.index') }}" class="block border-t px-3 py-2 text-center text-xs text-blue-600 hover:bg-gray-50">View all</a>
++    </div>
++</div>
++@once
++<script>
++    function notifBell() {
++        const csrf = () => document.querySelector('meta[name="csrf-token"]').content;
++        return {
++            open: false, unread: 0, items: [],
++            async load() {
++                try {
++                    const r = await fetch(@js(route('notifications.feed')), {headers: {'Accept': 'application/json'}});
++                    if (!r.ok) return;
++                    const d = await r.json();
++                    this.unread = d.unread; this.items = d.items;
++                } catch (e) {}
++            },
++            markOne(n) {
++                if (n.read) return;
++                fetch(@js(url('/notifications')) + '/' + n.id + '/read', {method: 'POST', keepalive: true,
++                    headers: {'X-CSRF-TOKEN': csrf(), 'Accept': 'application/json'}});
++            },
++            async markAll() {
++                await fetch(@js(route('notifications.readAll')), {method: 'POST',
++                    headers: {'X-CSRF-TOKEN': csrf(), 'Accept': 'application/json'}});
++                this.load();
++            },
++        };
++    }
++</script>
++@endonce
+diff --git a/resources/views/users/create.blade.php b/resources/views/users/create.blade.php
+index 3464aa8..a8f22d3 100644
+--- a/resources/views/users/create.blade.php
++++ b/resources/views/users/create.blade.php
+@@ -43,6 +43,13 @@ class="w-full border rounded px-3 py-2" required>
+             <p class="text-xs text-gray-500 mt-1">This will be used for login (stored in email field).</p>
+         </div>
+ 
++        <div>
++            <label class="block text-sm font-medium mb-1">Contact email <span class="text-gray-400">(optional)</span></label>
++            <input type="email" name="contact_email" value="{{ old('contact_email') }}"
++                   class="w-full border rounded px-3 py-2">
++            <p class="text-xs text-gray-500 mt-1">Real email for critical alerts (temp guard, pay-date). Not used for login.</p>
++        </div>
++
+         <div>
+             <label class="block text-sm font-medium mb-1">Role</label>
+             <select name="role" class="w-full border rounded px-3 py-2" required>
+diff --git a/resources/views/users/index.blade.php b/resources/views/users/index.blade.php
+index 29d0fc6..020813c 100644
+--- a/resources/views/users/index.blade.php
++++ b/resources/views/users/index.blade.php
+@@ -35,6 +35,7 @@ class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">
+                     <th class="text-left px-4 py-3">ID</th>
+                     <th class="text-left px-4 py-3">Name</th>
+                     <th class="text-left px-4 py-3">Username</th>
++                    <th class="text-left px-4 py-3">Contact email</th>
+                     <th class="text-left px-4 py-3">Role(s)</th>
+                     <th class="text-left px-4 py-3">Created</th>
+                     <th class="text-left px-4 py-3">Actions</th>
+@@ -55,6 +56,16 @@ class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">
+ 
+                         <td class="px-4 py-3">{{ $u->email }}</td>
+ 
++                        <td class="px-4 py-3">
++                            <form method="POST" action="{{ route('users.contactEmail', $u) }}" class="flex gap-1">
++                                @csrf
++                                @method('PATCH')
++                                <input type="email" name="contact_email" value="{{ $u->contact_email }}"
++                                       placeholder="optional" class="border rounded px-2 py-1 text-sm w-44">
++                                <button type="submit" class="bg-gray-700 text-white px-2 py-1 rounded text-xs hover:bg-gray-800">Save</button>
++                            </form>
++                        </td>
++
+                         <td class="px-4 py-3">
+                             {{ $u->roles->pluck('name')->join(', ') ?: '-' }}
+                         </td>
+@@ -80,7 +91,7 @@ class="bg-red-600 text-white px-3 py-1 rounded hover:bg-red-700 disabled:opacity
+                     </tr>
+                 @empty
+                     <tr>
+-                        <td colspan="6" class="px-4 py-6 text-center text-gray-500">
++                        <td colspan="7" class="px-4 py-6 text-center text-gray-500">
+                             No users found.
+                         </td>
+                     </tr>
+diff --git a/routes/web.php b/routes/web.php
+index 952d1f8..03cf050 100644
+--- a/routes/web.php
++++ b/routes/web.php
+@@ -33,6 +33,12 @@
+ */
+ Route::middleware('auth')->group(function () {
+ 
++    // V4-P6: notification bell + list
++    Route::get('/notifications', [\App\Http\Controllers\NotificationController::class, 'index'])->name('notifications.index');
++    Route::get('/notifications/feed', [\App\Http\Controllers\NotificationController::class, 'feed'])->name('notifications.feed');
++    Route::post('/notifications/read-all', [\App\Http\Controllers\NotificationController::class, 'readAll'])->name('notifications.readAll');
++    Route::post('/notifications/{id}/read', [\App\Http\Controllers\NotificationController::class, 'read'])->whereNumber('id')->name('notifications.read');
++
+     /*
+     |--------------------------------------------------------------------------
+     | Home / Dashboard
+@@ -490,6 +496,7 @@
+         Route::get('/users/create', [UserManagementController::class, 'create'])->name('users.create');
+         Route::post('/users', [UserManagementController::class, 'store'])->name('users.store');
+         Route::delete('/users/{user}', [UserManagementController::class, 'destroy'])->name('users.destroy');
++        Route::patch('/users/{user}/contact-email', [UserManagementController::class, 'updateContactEmail'])->name('users.contactEmail');
+     });
+ 
+     /*

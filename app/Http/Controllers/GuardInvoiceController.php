@@ -99,6 +99,10 @@ class GuardInvoiceController extends Controller
     {
         $this->authorize('manage-invoices');
 
+        if ($message = $event->tempGuardBlockMessage()) {
+            return redirect()->back()->with('error', $message);
+        }
+
         $result = $bulk->handle($event);
 
         return redirect()
@@ -186,6 +190,10 @@ class GuardInvoiceController extends Controller
     {
         $this->authorize('manage-invoices');
 
+        if ($message = optional($guardInvoice->event)->tempGuardBlockMessage()) {
+            return redirect()->route('guard-invoices.show', $guardInvoice)->with('error', $message);
+        }
+
         if ($guardInvoice->status !== 'draft') {
             return redirect()
                 ->route('guard-invoices.show', $guardInvoice)
@@ -254,6 +262,10 @@ class GuardInvoiceController extends Controller
     public function markPaid(GuardInvoice $guardInvoice)
     {
         $this->authorize('manage-invoices');
+
+        if ($message = optional($guardInvoice->event)->tempGuardBlockMessage()) {
+            return redirect()->route('guard-invoices.show', $guardInvoice)->with('error', $message);
+        }
 
         if ($guardInvoice->status !== 'issued') {
             return redirect()

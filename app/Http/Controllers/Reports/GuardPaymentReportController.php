@@ -102,6 +102,11 @@ class GuardPaymentReportController extends Controller
             'remarks'           => 'nullable|string',
         ]);
 
+        // V4-P5: no payments recorded while the event has temporary guards.
+        if ($message = optional(Event::find($data['event_id']))->tempGuardBlockMessage()) {
+            return back()->with('error', $message);
+        }
+
         $payment = EventGuardPayment::updateOrCreate(
             ['event_id' => $data['event_id'], 'guard_id' => $data['guard_id']],
             [
@@ -127,6 +132,24 @@ class GuardPaymentReportController extends Controller
         }
 
         return back()->with('success', $message);
+    }
+
+    /**
+     * Per-event Yes/No: client invoice received. Event-level (applies to
+     * every guard on the event), same edit gate as the payment fields.
+     */
+    public function saveClientInvoiceReceived(Request $request)
+    {
+        $data = $request->validate([
+            'event_id' => 'required|exists:events,id',
+            'received' => 'required|in:0,1',
+        ]);
+
+        $event = Event::findOrFail($data['event_id']);
+        $event->client_invoice_received = $data['received'] === '1';
+        $event->save();
+
+        return back()->with('success', 'Client invoice marked ' . ($event->client_invoice_received ? 'received' : 'not received') . '.');
     }
 
     /**
@@ -306,6 +329,7 @@ class GuardPaymentReportController extends Controller
                     'event_name'     => $event?->event_name ?? '-',
                     'client_id'      => $event?->client_id ?? 0,
                     'client_name'    => $event?->client?->name ?? '-',
+                    'client_invoice_received' => (bool) ($event?->client_invoice_received),
                     'pay_rate'       => round($rate, 2),
                     'hours'          => 0.0,
                     'amount'         => 0.0,
@@ -407,8 +431,10 @@ class GuardPaymentReportController extends Controller
             return 0.0;
         }
 
-        $start = strtotime((string) $shift->date . ' ' . $shift->start_time);
-        $end   = strtotime((string) $shift->date . ' ' . $shift->end_time);
+        // Time-only strings: $shift->date is cast to Carbon, so prefixing it
+        // produced an invalid string, strtotime()=false and a bogus 24h shift.
+        $start = strtotime((string) $shift->start_time);
+        $end   = strtotime((string) $shift->end_time);
 
         if ($end <= $start) {
             $end = strtotime('+1 day', $end);

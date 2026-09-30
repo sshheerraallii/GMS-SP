@@ -91,7 +91,11 @@
                     <tr class="hover:bg-gray-50">
 
                         <td class="border p-2 font-medium">
-    <div>{{ $event->event_name }}</div>
+    <div>{{ $event->event_name }}
+        @if(isset($tempGuardEventIds) && $tempGuardEventIds->has((int) $event->id))
+            <span class="ml-1 inline-flex items-center rounded-full bg-amber-200 px-2 py-0.5 text-[10px] font-bold text-amber-900" title="Has a temporary guard - invoices blocked">TEMP GUARD</span>
+        @endif
+    </div>
 
     @if($event->start_date)
         <div class="text-xs text-gray-500">
