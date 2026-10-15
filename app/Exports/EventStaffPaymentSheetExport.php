@@ -5,7 +5,7 @@ namespace App\Exports;
 use App\Models\Event;
 use App\Models\EventShift;
 use Illuminate\Support\Collection;
-use Illuminate\Support\Facades\DB;
+use App\Services\GuardPayments\ShiftPayCalculator;
 use Maatwebsite\Excel\Concerns\FromCollection;
 use Maatwebsite\Excel\Concerns\ShouldAutoSize;
 use Maatwebsite\Excel\Concerns\WithHeadings;
@@ -22,80 +22,60 @@ class EventStaffPaymentSheetExport implements FromCollection, WithHeadings, Shou
         $this->reduced = $reduced;
     }
 
+    /** Expense is only shown to roles allowed to see it (Super Admin / Accountant). */
+    private function showExpense(): bool
+    {
+        return (bool) auth()->user()?->can('edit-guard-payments');
+    }
+
     public function collection(): Collection
     {
-        $rows = EventShift::query()
-            ->from('event_shifts as es')
-            ->join('security_guards as sg', 'sg.id', '=', 'es.guard_id')
-            ->where('es.event_id', $this->event->id)
-            ->whereNull('es.cancelled_at')
-            ->select([
-                'es.guard_id',
-                'sg.fullname',
-                'sg.sort_code',
-                'sg.account_number',
-                'sg.category',
-                DB::raw("
-                    SUM(
-                        GREATEST(
-                            (
-                                TIME_TO_SEC(
-                                    TIMEDIFF(
-                                        CASE
-                                            WHEN es.end_time >= es.start_time THEN es.end_time
-                                            ELSE ADDTIME(es.end_time, '24:00:00')
-                                        END,
-                                        es.start_time
-                                    )
-                                ) / 3600
-                            ) - COALESCE(es.break_hours, 0),
-                            0
-                        )
-                    ) AS total_hours
-                "),
-            ])
-            ->groupBy('es.guard_id', 'sg.fullname', 'sg.sort_code', 'sg.account_number', 'sg.category')
-            ->orderBy('sg.fullname')
+        // V5-P3: per-shift pay-rate overrides + expense (see ShiftPayCalculator).
+        $shifts = EventShift::query()
+            ->where('event_id', $this->event->id)
+            ->whereNull('cancelled_at')
+            ->whereNotNull('guard_id')
+            ->get()
+            ->groupBy('guard_id');
+
+        $guards = \App\Models\SecurityGuard::withTrashed()
+            ->whereIn('id', $shifts->keys()->all())
+            ->orderBy('fullname')
             ->get();
 
-        return $rows->map(function ($row) {
-            $totalHours = $row->total_hours !== null ? round((float) $row->total_hours, 2) : 0;
-
-            /*
-             * V3-P3: rate resolves per guard from their category
-             * (SIA / Steward), falling back to the event's base pay_rate.
-             * Resolution always yields a number, so the previous
-             * "rate not set" null path no longer arises here.
-             */
-            $numericRate = $this->event->rateFor($row->category, 'pay');
-            $totalPay = round($totalHours * $numericRate, 2);
+        return $guards->map(function ($guard) use ($shifts) {
+            $calc = ShiftPayCalculator::summarise($this->event, $guard->category, $shifts->get($guard->id, collect()));
 
             $out = [
-                'Name'        => $row->fullname ?? '',
-                'Total Hours' => number_format($totalHours, 2, '.', ''),
-                'Rate'        => number_format($numericRate, 2, '.', ''),
-                'Total Pay'   => number_format($totalPay, 2, '.', ''),
+                'Name'        => $guard->fullname ?? '',
+                'Total Hours' => number_format($calc['hours'], 2, '.', ''),
+                'Rate'        => number_format($calc['rate'], 2, '.', '') . ($calc['rate_varies'] ? ' (avg)' : ''),
+                'Total Pay'   => number_format($calc['amount'], 2, '.', ''),
             ];
+
+            if ($this->showExpense()) {
+                $out['Expense']       = number_format($calc['expense'], 2, '.', '');
+                $out['Total Payable'] = number_format($calc['amount'] + $calc['expense'], 2, '.', '');
+            }
 
             if ($this->reduced) {
                 return $out;
             }
 
-            $out['Sort Code'] = $row->sort_code ?? '';
-            $out['Account Number'] = $row->account_number ?? '';
+            $out['Sort Code'] = $guard->sort_code ?? '';
+            $out['Account Number'] = $guard->account_number ?? '';
 
             return $out;
-        });
+        })->values();
     }
 
     public function headings(): array
     {
-        $base = [
-            'Name',
-            'Total Hours',
-            'Rate',
-            'Total Pay',
-        ];
+        $base = ['Name', 'Total Hours', 'Rate', 'Total Pay'];
+
+        if ($this->showExpense()) {
+            $base = array_merge($base, ['Expense', 'Total Payable']);
+        }
 
         return $this->reduced ? $base : array_merge($base, ['Sort Code', 'Account Number']);
     }

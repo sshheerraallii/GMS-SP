@@ -36,8 +36,9 @@ class GuardPaymentReportExport implements FromCollection, WithHeadings, ShouldAu
                         'End'               => $row['end'],
                         'Break'             => number_format((float) $row['break'], 2, '.', ''),
                         'Hours'             => number_format((float) $row['hours'], 2, '.', ''),
-                        'Pay Rate'          => number_format((float) $event['pay_rate'], 2, '.', ''),
+                        'Pay Rate'          => number_format((float) ($row['pay_rate'] ?? $event['pay_rate']), 2, '.', ''),
                         'Amount'            => number_format((float) $row['amount'], 2, '.', ''),
+                        'Expense'           => number_format((float) ($row['expense'] ?? 0), 2, '.', ''),
                         'Site'              => $row['location'],
                         'Paid By'           => $event['payment']['paid_by'],
                         'Paid From Account' => $event['payment']['paid_from_account'],
@@ -48,16 +49,26 @@ class GuardPaymentReportExport implements FromCollection, WithHeadings, ShouldAu
             }
         }
 
+        // V5-P3: expense column only for roles allowed to see it.
+        if (!auth()->user()?->can('edit-guard-payments')) {
+            $out = $out->map(function ($r) {
+                unset($r['Expense']);
+                return $r;
+            });
+        }
+
         return $out;
     }
 
     public function headings(): array
     {
-        return [
-            'Client', 'Event', 'Date', 'Start', 'End', 'Break', 'Hours',
-            'Pay Rate', 'Amount', 'Site',
-            'Paid By', 'Paid From Account', 'Paid On', 'Remarks',
-        ];
+        $h = ['Client', 'Event', 'Date', 'Start', 'End', 'Break', 'Hours', 'Pay Rate', 'Amount'];
+
+        if (auth()->user()?->can('edit-guard-payments')) {
+            $h[] = 'Expense';
+        }
+
+        return array_merge($h, ['Site', 'Paid By', 'Paid From Account', 'Paid On', 'Remarks']);
     }
 
     public function title(): string

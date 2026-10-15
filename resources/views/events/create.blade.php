@@ -151,16 +151,16 @@
 
         {{-- INVOICE DATE --}}
         <div>
-            <label class="block font-medium mb-1">Invoice Date</label>
-            <input type="date" name="invoice_date"
+            <label class="block font-medium mb-1">Invoice Date <span class="text-red-600">*</span></label>
+            <input type="date" name="invoice_date" required
                    value="{{ old('invoice_date') }}"
                    class="w-full border rounded px-3 py-2">
         </div>
 
         {{-- STAFF PAY DATE (V3-P5) --}}
         <div>
-            <label class="block font-medium mb-1">Staff Pay Date</label>
-            <input type="date" name="staff_pay_date"
+            <label class="block font-medium mb-1">Staff Pay Date <span class="text-red-600">*</span></label>
+            <input type="date" name="staff_pay_date" required
                    value="{{ old('staff_pay_date') }}"
                    class="w-full border rounded px-3 py-2">
             <p class="mt-1 text-xs text-gray-400">
@@ -170,8 +170,8 @@
 
         {{-- PAY RATE --}}
         <div>
-            <label class="block font-medium mb-1">Pay Rate / Hour</label>
-            <input type="number" step="0.01" name="pay_rate"
+            <label class="block font-medium mb-1">Pay Rate / Hour <span class="text-red-600">*</span></label>
+            <input type="number" step="0.01" min="0" name="pay_rate" required
                    value="{{ old('pay_rate') }}"
                    class="w-full border rounded px-3 py-2">
         </div>

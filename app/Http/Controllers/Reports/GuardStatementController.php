@@ -72,23 +72,36 @@ class GuardStatementController extends Controller
         $grandHours = 0.0;
         $grandAmount = 0.0;
 
+        // V5-P3: expense only for roles allowed to see it (Super Admin / Accountant).
+        $showExpense = (bool) auth()->user()?->can('edit-guard-payments');
+        $grandExpense = 0.0;
+
         foreach ($shifts as $shift) {
             $event = $shift->event;
             $eid   = $event?->id ?? 0;
             // V3-P3: each event valued at this guard's category pay rate.
-            $rate  = $event ? $event->rateForGuard($guard, 'pay') : 0.0;
+            // V5-P3: shift override -> category rate -> event base rate.
+            $rate  = $event ? $shift->resolvedRate($event, $guard->category, 'pay') : 0.0;
             $hours = $this->shiftNetHours($shift);
             $amount = round($hours * $rate, 2);
+            $expense = $showExpense ? round((float) ($shift->expense ?? 0), 2) : 0.0;
 
             if (!isset($groups[$eid])) {
                 $groups[$eid] = [
+                    'event_id'    => $eid,
                     'event_name'  => $event?->event_name ?? '—',
                     'client_name' => $event?->client?->name ?? '—',
                     'pay_rate'    => $rate,
+                    'rate_varies' => false,
                     'rows'        => [],
                     'hours'       => 0.0,
                     'amount'      => 0.0,
+                    'expense'     => 0.0,
                 ];
+            }
+
+            if (abs($groups[$eid]['pay_rate'] - $rate) > 0.0001) {
+                $groups[$eid]['rate_varies'] = true;
             }
 
             $groups[$eid]['rows'][] = [
@@ -98,11 +111,32 @@ class GuardStatementController extends Controller
                 'break' => number_format((float) ($shift->break_hours ?? 0), 2),
                 'hours' => number_format($hours, 2),
                 'amount' => number_format($amount, 2),
+                'expense' => number_format($expense, 2),
             ];
             $groups[$eid]['hours']  += $hours;
             $groups[$eid]['amount'] += $amount;
+            $groups[$eid]['expense'] += $expense;
+            $grandExpense += $expense;
             $grandHours  += $hours;
             $grandAmount += $amount;
+        }
+
+        // V5: payment details per event (same rows the pay sheet and the
+        // Guard Payment Report edit).
+        $payments = \App\Models\EventGuardPayment::query()
+            ->where('guard_id', $guard->id)
+            ->whereIn('event_id', array_keys($groups))
+            ->get()
+            ->keyBy('event_id');
+
+        foreach ($groups as $eid => $g) {
+            $p = $payments->get($eid);
+            $groups[$eid]['payment'] = [
+                'paid_by'           => $p?->paid_by,
+                'paid_from_account' => $p?->paid_from_account,
+                'paid_on'           => $p?->paid_on?->format('d/m/Y'),
+                'remarks'           => $p?->remarks,
+            ];
         }
 
         $pdf = Pdf::loadView('reports.guard-statement.pdf', [
@@ -110,6 +144,8 @@ class GuardStatementController extends Controller
             'groups'      => array_values($groups),
             'grandHours'  => number_format($grandHours, 2),
             'grandAmount' => number_format($grandAmount, 2),
+            'showExpense' => $showExpense,
+            'grandExpense' => number_format($grandExpense, 2),
             'dateFrom'    => $data['date_from'] ?? null,
             'dateTo'      => $data['date_to'] ?? null,
             'generatedAt' => now('Europe/London')->format('d/m/Y H:i'),

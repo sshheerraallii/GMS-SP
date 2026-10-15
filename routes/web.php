@@ -210,6 +210,9 @@ Route::middleware('auth')->group(function () {
                 ->name('guardPayments.pdf');
             Route::get('/guard-payments/excel', [\App\Http\Controllers\Reports\GuardPaymentReportController::class, 'exportExcel'])
                 ->name('guardPayments.excel');
+            // V5: guard-facing copy — hours and sites only, no rates/amounts/totals/payment info.
+            Route::get('/guard-payments/guard-copy', [\App\Http\Controllers\Reports\GuardPaymentReportController::class, 'exportGuardCopyPdf'])
+                ->name('guardPayments.guardCopy');
             Route::post('/guard-payments/save', [\App\Http\Controllers\Reports\GuardPaymentReportController::class, 'save'])
                 ->middleware('can:edit-guard-payments')
                 ->name('guardPayments.save');
@@ -220,6 +223,15 @@ Route::middleware('auth')->group(function () {
                 ->middleware('role:Super Admin')
                 ->name('guardPayments.history');
         });
+
+    /*
+    |--------------------------------------------------------------------------
+    | V5: Month Wise Guard Payment Report — open to every logged-in role.
+    | Editing goes through reports.guardPayments.save (edit-guard-payments).
+    |--------------------------------------------------------------------------
+    */
+    Route::get('/reports/month-guard-payments', [\App\Http\Controllers\Reports\MonthGuardPaymentReportController::class, 'index'])
+        ->name('reports.monthGuardPayments.index');
 
     /*
     |--------------------------------------------------------------------------

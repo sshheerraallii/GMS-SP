@@ -235,12 +235,50 @@ class GuardPaymentReportController extends Controller
             'group'       => $group,
             'groups'      => $built['groups'],
             'totals'      => $built['totals'],
+            'showExpense' => (bool) auth()->user()?->can('edit-guard-payments'),
             'dateFrom'    => $data['date_from'] ?? null,
             'dateTo'      => $data['date_to'] ?? null,
             'generatedAt' => now('Europe/London')->format('d/m/Y H:i'),
         ])->setPaper('a4', 'landscape');
 
         return $pdf->download('guard-payments-' . Str::slug($guard->fullname ?: ('guard-' . $guard->id)) . '.pdf');
+    }
+
+    /**
+     * V5: a copy that can be sent to the guard. Same filters and the same
+     * hours as the report, but no pay rate, amounts, totals or payment
+     * details. Single guard only (guard_id is required).
+     */
+    public function exportGuardCopyPdf(Request $request)
+    {
+        [$guard, $data, $group] = $this->resolveForExport($request);
+        $built = $this->build($guard, $data, 'event');
+
+        $events = $built['groups']
+            ->flatMap(fn ($g) => $g['events'])
+            ->map(fn ($e) => [
+                'event_name'  => $e['event_name'],
+                'client_name' => $e['client_name'],
+                'rows'        => collect($e['rows'])->map(fn ($r) => [
+                    'date'     => $r['date'],
+                    'start'    => $r['start'],
+                    'end'      => $r['end'],
+                    'break'    => $r['break'],
+                    'hours'    => $r['hours'],
+                    'location' => $r['location'],
+                ])->all(),
+            ])
+            ->values();
+
+        $pdf = Pdf::loadView('reports.guard-payments.guard-copy-pdf', [
+            'guard'       => $guard,
+            'events'      => $events,
+            'dateFrom'    => $data['date_from'] ?? null,
+            'dateTo'      => $data['date_to'] ?? null,
+            'generatedAt' => now('Europe/London')->format('d/m/Y H:i'),
+        ])->setPaper('a4', 'portrait');
+
+        return $pdf->download('guard-copy-' . Str::slug($guard->fullname ?: ('guard-' . $guard->id)) . '.pdf');
     }
 
     // ---------------------------------------------------------------
@@ -313,13 +351,18 @@ class GuardPaymentReportController extends Controller
         $events = [];
         $grandHours = 0.0;
         $grandAmount = 0.0;
+        $grandExpense = 0.0;
+        // V5-P3: expense only for roles allowed to see it (Super Admin / Accountant).
+        $showExpense = (bool) auth()->user()?->can('edit-guard-payments');
 
         foreach ($shifts as $shift) {
             $event = $shift->event;
             $eid   = $event?->id ?? 0;
-            $rate  = $event ? $event->rateForGuard($guard, 'pay') : 0.0;
+            // V5-P3: shift override -> category rate -> event base rate.
+            $rate  = $event ? $shift->resolvedRate($event, $guard->category, 'pay') : 0.0;
             $hours = $this->shiftNetHours($shift);
             $amount = round($hours * $rate, 2);
+            $expense = $showExpense ? round((float) ($shift->expense ?? 0), 2) : 0.0;
 
             if (!isset($events[$eid])) {
                 $payment = $payments->get($eid);
@@ -331,8 +374,10 @@ class GuardPaymentReportController extends Controller
                     'client_name'    => $event?->client?->name ?? '-',
                     'client_invoice_received' => (bool) ($event?->client_invoice_received),
                     'pay_rate'       => round($rate, 2),
+                    'rate_varies'    => false,
                     'hours'          => 0.0,
                     'amount'         => 0.0,
+                    'expense'        => 0.0,
                     'rows'           => [],
                     'invoice_status' => $invoiceStatus[$eid] ?? null,
                     'payment'        => [
@@ -344,25 +389,34 @@ class GuardPaymentReportController extends Controller
                 ];
             }
 
+            if (abs($events[$eid]['pay_rate'] - round($rate, 2)) > 0.0001) {
+                $events[$eid]['rate_varies'] = true;
+            }
+
             $events[$eid]['rows'][] = [
                 'date'     => optional($shift->date)->format('d/m/Y'),
                 'start'    => substr((string) $shift->start_time, 0, 5),
                 'end'      => substr((string) $shift->end_time, 0, 5),
                 'break'    => round((float) ($shift->break_hours ?? 0), 2),
                 'hours'    => round($hours, 2),
+                'pay_rate' => round($rate, 2),
                 'amount'   => $amount,
+                'expense'  => $expense,
                 'location' => $shift->location ?: '',
             ];
 
             $events[$eid]['hours']  += $hours;
             $events[$eid]['amount'] += $amount;
+            $events[$eid]['expense'] += $expense;
             $grandHours  += $hours;
             $grandAmount += $amount;
+            $grandExpense += $expense;
         }
 
         foreach ($events as $eid => $e) {
             $events[$eid]['hours']  = round($e['hours'], 2);
             $events[$eid]['amount'] = round($e['amount'], 2);
+            $events[$eid]['expense'] = round($e['expense'], 2);
         }
 
         $paidCount   = collect($events)->filter(fn ($e) => $e['payment']['paid_on'] !== '')->count();
@@ -371,6 +425,7 @@ class GuardPaymentReportController extends Controller
         $totals = [
             'hours'  => round($grandHours, 2),
             'amount' => round($grandAmount, 2),
+            'expense' => round($grandExpense, 2),
             'paid'   => $paidCount,
             'unpaid' => $unpaidCount,
         ];

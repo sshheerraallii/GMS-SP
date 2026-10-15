@@ -18,6 +18,9 @@ class EventAssignmentSlot extends Model
         'start_time',
         'end_time',
         'break_hours',
+        'pay_rate',
+        'charge_rate',
+        'expense',
         'location',
         'site_postcode',
         'site_name',
@@ -27,6 +30,9 @@ class EventAssignmentSlot extends Model
     protected $casts = [
         'date' => 'date',
         'break_hours' => 'decimal:2',
+        'pay_rate' => 'decimal:2',
+        'charge_rate' => 'decimal:2',
+        'expense' => 'decimal:2',
     ];
 
     public function event(): BelongsTo

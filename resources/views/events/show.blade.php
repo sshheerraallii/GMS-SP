@@ -309,6 +309,8 @@
             @if(!empty($dailyGuards))
                 <div class="space-y-6">
                     @foreach($dailyGuards as $date => $requiredCount)
+                        {{-- V5: hide days with 0 guards required --}}
+                        @continue((int) $requiredCount <= 0)
                         @php
                             $rows = $assignmentRowsByDate[$date] ?? [];
                             $issues = $assignmentIssuesByDate[$date] ?? [];
@@ -441,6 +443,9 @@
                     @csrf
                     <input type="hidden" name="date" value="{{ $row['date'] }}">
                     <input type="hidden" name="guard_id" value="{{ $row['guard_id'] }}">
+                    {{-- V5: cancel/un-cancel this single shift only --}}
+                    <input type="hidden" name="start" value="{{ $row['start_value'] ?? '' }}">
+                    <input type="hidden" name="end" value="{{ $row['end_value'] ?? '' }}">
                     <button type="submit"
                             class="inline-flex items-center justify-center rounded-md px-3 py-2 text-sm font-semibold text-white shadow {{ $row['is_cancelled'] ? 'bg-gray-600 hover:bg-gray-700' : 'bg-red-600 hover:bg-red-700' }}">
                         {{ $row['is_cancelled'] ? 'Un-cancel' : 'Cancel' }}

@@ -39,7 +39,7 @@
         @foreach($grp['events'] as $ev)
             <div class="event-head">
                 {{ $ev['event_name'] }} ({{ $ev['client_name'] }})
-                &mdash; rate {{ number_format($ev['pay_rate'], 2) }}
+                &mdash; rate {{ !empty($ev['rate_varies']) ? 'varies' : number_format($ev['pay_rate'], 2) }}
                 &middot; {{ number_format($ev['hours'], 2) }} hrs
                 &middot; {{ number_format($ev['amount'], 2) }}
             </div>
@@ -49,6 +49,7 @@
                     <tr>
                         <th>Date</th><th>Start</th><th>End</th>
                         <th class="num">Break</th><th class="num">Hours</th><th class="num">Amount</th>
+                        @if($showExpense ?? false)<th class="num">Expense</th>@endif
                         <th>Site</th>
                     </tr>
                 </thead>
@@ -61,6 +62,7 @@
                             <td class="num">{{ number_format($row['break'], 2) }}</td>
                             <td class="num">{{ number_format($row['hours'], 2) }}</td>
                             <td class="num">{{ number_format($row['amount'], 2) }}</td>
+                            @if($showExpense ?? false)<td class="num">{{ number_format($row['expense'] ?? 0, 2) }}</td>@endif
                             <td>{{ $row['location'] }}</td>
                         </tr>
                     @endforeach
@@ -80,6 +82,7 @@
 <div class="grand">
     Total hours: {{ number_format($totals['hours'], 2) }}
     &middot; Total pay: {{ number_format($totals['amount'], 2) }}
+    @if($showExpense ?? false)&middot; Total expense: {{ number_format($totals['expense'] ?? 0, 2) }}@endif
     &middot; Events paid/unpaid: {{ $totals['paid'] }}/{{ $totals['unpaid'] }}
 </div>
 

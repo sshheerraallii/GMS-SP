@@ -138,11 +138,17 @@ class EventReportController extends Controller
              * the old `total_hours * charge_rate` shortcut is invalid once
              * the two categories are charged differently.
              */
-            $days[$dateKey]['rows'][$shift->guard_id]['charge'] = round(
-                $days[$dateKey]['rows'][$shift->guard_id]['hours']
-                    * $event->rateForGuard($guard, 'charge'),
-                2
-            );
+            // V5-P3: a per-shift charge override is valued shift by shift; with no
+            // override the original hours x rate formula is kept so figures are unchanged.
+            $row = &$days[$dateKey]['rows'][$shift->guard_id];
+            $row['charge_acc'] = ($row['charge_acc'] ?? 0) + $hours * $shift->resolvedRate($event, $guard?->category, 'charge');
+            if ($shift->charge_rate !== null && $shift->charge_rate !== '') {
+                $row['has_override'] = true;
+            }
+            $row['charge'] = !empty($row['has_override'])
+                ? round($row['charge_acc'], 2)
+                : round($row['hours'] * $event->rateForGuard($guard, 'charge'), 2);
+            unset($row);
 
             $days[$dateKey]['total_hours'] += $hours;
 

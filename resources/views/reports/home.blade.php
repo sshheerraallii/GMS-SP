@@ -135,6 +135,40 @@
             </div>
         </a>
 
+        <!-- Month Wise Guard Payment Report -->
+        <a href="{{ route('reports.monthGuardPayments.index') }}"
+           class="group bg-white border border-gray-200 rounded-2xl shadow-sm hover:shadow-md transition overflow-hidden">
+            <div class="p-6 flex items-start gap-4">
+                <div class="h-12 w-12 rounded-xl bg-indigo-600 text-white flex items-center justify-center">
+                    <svg class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="3" y="4" width="18" height="18" rx="2"/>
+                        <path d="M16 2v4M8 2v4M3 10h18"/>
+                    </svg>
+                </div>
+
+                <div class="flex-1">
+                    <div class="flex items-center justify-between gap-3">
+                        <h2 class="text-lg font-semibold text-gray-900">Month Wise Guard Payment Report</h2>
+                        <span class="text-gray-400 group-hover:text-gray-700 transition">&rarr;</span>
+                    </div>
+
+                    <p class="text-sm text-gray-500 mt-1">
+                        Every guard who worked in a date range: hours, amount, expense and payment status, expanding to event-wise detail.
+                    </p>
+
+                    <div class="mt-4 flex flex-wrap gap-2">
+                        <span class="text-xs font-medium px-2.5 py-1 rounded-full bg-indigo-50 text-indigo-700">All guards</span>
+                        <span class="text-xs font-medium px-2.5 py-1 rounded-full bg-indigo-50 text-indigo-700">Date range</span>
+                        <span class="text-xs font-medium px-2.5 py-1 rounded-full bg-indigo-50 text-indigo-700">Editable payments</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="px-6 py-4 bg-gray-50 border-t border-gray-200 text-sm text-gray-700">
+                Open Month Wise Guard Payment Report
+            </div>
+        </a>
+
         @can('view-guard-statement')
         <a href="{{ route('reports.guardStatement.form') }}"
            class="group bg-white border border-gray-200 rounded-2xl shadow-sm hover:shadow-md transition overflow-hidden">

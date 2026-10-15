@@ -41,6 +41,17 @@ class EventController extends Controller
                     ->orWhere('address', 'like', '%' . $q . '%')
                     ->orWhereHas('client', function ($c) use ($q) {
                         $c->where('name', 'like', '%' . $q . '%');
+                    })
+                    // V5: search by shift location / postcode / site name
+                    ->orWhereHas('shifts', function ($sh) use ($q) {
+                        $sh->where('location', 'like', '%' . $q . '%')
+                           ->orWhere('site_postcode', 'like', '%' . $q . '%')
+                           ->orWhere('site_name', 'like', '%' . $q . '%');
+                    })
+                    ->orWhereHas('assignmentSlots', function ($sl) use ($q) {
+                        $sl->where('location', 'like', '%' . $q . '%')
+                           ->orWhere('site_postcode', 'like', '%' . $q . '%')
+                           ->orWhere('site_name', 'like', '%' . $q . '%');
                     });
             });
         }
@@ -50,7 +61,8 @@ class EventController extends Controller
             ->withQueryString();
 
         $events->getCollection()->transform(function ($event) {
-            $totalHours = (float) $event->shifts->sum(function ($shift) {
+            // V5: cancelled shifts count as 0 hours (net of break otherwise).
+            $totalHours = (float) $event->shifts->whereNull('cancelled_at')->sum(function ($shift) {
                 if (!$shift->start_time || !$shift->end_time || !$shift->date) {
                     return 0;
                 }
@@ -152,9 +164,9 @@ class EventController extends Controller
             'charge_rate'     => 'nullable|numeric',
             'charge_rate_sia'     => 'nullable|numeric|min:0',
             'charge_rate_steward' => 'nullable|numeric|min:0',
-            'invoice_date'    => 'nullable|date',
-            'staff_pay_date'  => 'nullable|date',
-            'pay_rate'        => 'nullable|numeric',
+            'invoice_date'    => 'required|date',
+            'staff_pay_date'  => 'required|date',
+            'pay_rate'        => 'required|numeric|min:0',
             'pay_rate_sia'     => 'nullable|numeric|min:0',
             'pay_rate_steward' => 'nullable|numeric|min:0',
             'client_contact'  => 'nullable|string|max:100',
@@ -283,6 +295,7 @@ class EventController extends Controller
         })->values()->all();
 
         $mapped = collect();
+        $badBreaks = [];
 
         foreach ($rows as $rowIndex => $row) {
             $assoc = [];
@@ -306,6 +319,11 @@ $locationValue = $assoc['location'] ?? $assoc['shift_location'] ?? $assoc['site_
             $normalizedEnd = $this->normalizeImportedTime($endValue);
             $normalizedBreak = $this->normalizeImportedBreak($breakValue);
 
+            if ($normalizedBreak === null) {
+                $badBreaks[] = 'Row ' . ($rowIndex + 2) . ': "' . trim((string) $breakValue) . '"';
+                continue;
+            }
+
             if (!$normalizedDate) {
     continue;
 }
@@ -317,6 +335,14 @@ $locationValue = $assoc['location'] ?? $assoc['shift_location'] ?? $assoc['site_
     'break_hours' => $normalizedBreak,
     'location'    => $this->normalizeImportedLocation($locationValue),
 ]);
+        }
+
+        if (!empty($badBreaks)) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'import_file' => 'Unrecognised break value in ' . implode('; ', array_slice($badBreaks, 0, 5))
+                    . (count($badBreaks) > 5 ? '; and ' . (count($badBreaks) - 5) . ' more' : '')
+                    . '. Use 0, 15, 30, 45 or 60 minutes (or 0 / 0.25 / 0.5 / 0.75 / 1 hours). Nothing was imported.',
+            ]);
         }
 
         return $mapped->values();
@@ -424,51 +450,122 @@ $locationValue = $assoc['location'] ?? $assoc['shift_location'] ?? $assoc['site_
         }
     }
 
-    private function normalizeImportedBreak($value): float
+    /**
+     * Returns the break in hours (0, 0.25, 0.5, 0.75 or 1), or null when a
+     * non-empty value cannot be understood. V5: unrecognised values are no
+     * longer silently turned into 0; the import rejects the row instead.
+     */
+    private function normalizeImportedBreak($value): ?float
     {
-        if ($value === null || $value === '') {
-            return 0;
+        if ($value === null || trim((string) $value) === '') {
+            return 0.0;
         }
 
-        $value = trim((string) $value);
+        $raw = strtolower(trim((string) $value));
 
-        $map = [
-            '0' => 0.0,
-            '0.00' => 0.0,
-            '0.25' => 0.25,
-            '0.5' => 0.5,
-            '0.50' => 0.5,
-            '0.75' => 0.75,
-            '1' => 1.0,
-            '1.0' => 1.0,
-            '1.00' => 1.0,
-            '15' => 0.25,
-            '15m' => 0.25,
-            '15min' => 0.25,
-            '15 mins' => 0.25,
-            '30' => 0.5,
-            '30m' => 0.5,
-            '30min' => 0.5,
-            '30 mins' => 0.5,
-            '45' => 0.75,
-            '45m' => 0.75,
-            '45min' => 0.75,
-            '45 mins' => 0.75,
-            '60' => 1.0,
-            '60m' => 1.0,
-            '60min' => 1.0,
-            '60 mins' => 1.0,
-        ];
-
-        $key = strtolower($value);
-
-        if (array_key_exists($key, $map)) {
-            return $map[$key];
+        // "0:30", "1:00" style
+        if (preg_match('/^(\d{1,2}):(\d{2})$/', $raw, $m)) {
+            $hours = ((int) $m[1]) + ((int) $m[2]) / 60;
+            return in_array($hours, [0.0, 0.25, 0.5, 0.75, 1.0], true) ? $hours : null;
         }
 
-        $float = (float) $value;
+        // "30", "30m", "30 min", "30 minutes", "1hr", "1 hour", "0.5h", "1.0"
+        if (preg_match('/^(\d+(?:\.\d+)?)\s*(m|min|mins|minute|minutes|h|hr|hrs|hour|hours)?$/', $raw, $m)) {
+            $num  = (float) $m[1];
+            $unit = $m[2] ?? '';
 
-        return in_array($float, [0.0, 0.25, 0.5, 0.75, 1.0], true) ? $float : 0.0;
+            if (in_array($unit, ['m', 'min', 'mins', 'minute', 'minutes'], true)) {
+                $hours = $num / 60;
+            } elseif ($unit !== '') {
+                $hours = $num;
+            } else {
+                // bare number: 0.25 / 0.5 / 0.75 / 1 are hours; 15 / 30 / 45 / 60 are minutes
+                $hours = $num > 1 ? $num / 60 : $num;
+            }
+
+            $hours = round($hours, 2);
+
+            return in_array($hours, [0.0, 0.25, 0.5, 0.75, 1.0], true) ? $hours : null;
+        }
+
+        return null;
+    }
+
+    /**
+     * V5-P3: blank / non-numeric / out-of-range -> null; otherwise a
+     * rounded non-negative amount.
+     */
+    private function cleanMoney($value, float $max): ?float
+    {
+        if ($value === null || $value === '' || !is_numeric($value)) {
+            return null;
+        }
+
+        $v = round((float) $value, 2);
+
+        return ($v < 0 || $v > $max) ? null : $v;
+    }
+
+    /**
+     * Pay / charge override for a shift. Returns null when blank OR when it
+     * equals what the event would use anyway (category rate, else base), so
+     * the boxes can be pre-filled without freezing the value: a later change
+     * to the event's rate still flows through to every shift that was not
+     * deliberately overridden.
+     */
+    private function overrideOrNull($submitted, Event $event, ?string $category, string $kind): ?float
+    {
+        $v = $this->cleanMoney($submitted, 9999.99);
+
+        if ($v === null) {
+            return null;
+        }
+
+        return abs($v - $event->rateFor($category, $kind)) < 0.005 ? null : $v;
+    }
+
+    /**
+     * Resolve the three per-shift money fields for a row being saved.
+     *
+     * Who may change what:
+     *   pay rate    every role that can assign guards
+     *   charge rate view-charge-rate (Super Admin, Accountant)
+     *   expense     edit-guard-payments (Super Admin, Accountant)
+     * A field the current user may NOT change (or that the request did not
+     * send) keeps the value already on the slot, so a Moderator saving the
+     * grid can never wipe or alter a charge rate or expense.
+     * If the slot's guard changed, nothing is inherited from the old guard.
+     *
+     * @param array                   $input   submitted row (keys shift_pay_rate / shift_charge_rate / shift_expense)
+     * @param EventAssignmentSlot|null $old    the slot being replaced (same date + slot_no)
+     */
+    private function resolveShiftMoney(Event $event, array $input, $old, $guardId, ?string $category): array
+    {
+        $sameGuard = $old && $guardId && (int) $old->guard_id === (int) $guardId;
+        $keep = fn ($field) => ($sameGuard && $old->{$field} !== null && $old->{$field} !== '')
+            ? (float) $old->{$field}
+            : null;
+
+        $user = auth()->user();
+
+        $pay = array_key_exists('shift_pay_rate', $input)
+            ? $this->overrideOrNull($input['shift_pay_rate'], $event, $category, 'pay')
+            : $keep('pay_rate');
+
+        $charge = ($user && $user->can('view-charge-rate') && array_key_exists('shift_charge_rate', $input))
+            ? $this->overrideOrNull($input['shift_charge_rate'], $event, $category, 'charge')
+            : $keep('charge_rate');
+
+        $expense = ($user && $user->can('edit-guard-payments') && array_key_exists('shift_expense', $input))
+            ? $this->cleanMoney($input['shift_expense'], 99999999.99)
+            : $keep('expense');
+
+        // A swapped guard starts clean, whatever the form still holds.
+        if ($old && $old->guard_id && $guardId && (int) $old->guard_id !== (int) $guardId) {
+            return ['pay_rate' => null, 'charge_rate' => null, 'expense' => null];
+        }
+
+        return ['pay_rate' => $pay, 'charge_rate' => $charge, 'expense' => $expense];
     }
 
     private function nextSlotNumberForDate(Collection $rows, string $date, int $currentIndex): int
@@ -508,15 +605,28 @@ $locationValue = $assoc['location'] ?? $assoc['shift_location'] ?? $assoc['site_
      */
     private function snapshotCancellations(Event $event): array
     {
+        // V5: keyed per EXACT shift (date|guard|start|end), so cancelling one of a
+        // guard's two same-day shifts leaves the other one alone.
         return EventShift::query()
             ->where('event_id', $event->id)
             ->whereNotNull('cancelled_at')
             ->whereNotNull('guard_id')
-            ->get(['date', 'guard_id', 'cancelled_at'])
+            ->get(['date', 'guard_id', 'start_time', 'end_time', 'cancelled_at'])
             ->mapWithKeys(fn ($s) => [
-                optional($s->date)->toDateString() . '|' . (int) $s->guard_id => $s->cancelled_at,
+                $this->shiftKey($s->date, $s->guard_id, $s->start_time, $s->end_time) => $s->cancelled_at,
             ])
             ->all();
+    }
+
+    /**
+     * Stable business identity of one shift: date|guard|HH:MM|HH:MM.
+     * Never the volatile shift id, never shift_no.
+     */
+    private function shiftKey($date, $guardId, $start, $end): string
+    {
+        $d = $date instanceof \DateTimeInterface ? $date->format('Y-m-d') : substr((string) $date, 0, 10);
+
+        return $d . '|' . (int) $guardId . '|' . substr((string) $start, 0, 5) . '|' . substr((string) $end, 0, 5);
     }
 
     /**
@@ -526,36 +636,60 @@ $locationValue = $assoc['location'] ?? $assoc['shift_location'] ?? $assoc['site_
     private function restoreCancellations(Event $event, array $snapshot): void
     {
         foreach ($snapshot as $key => $cancelledAt) {
-            [$date, $guardId] = explode('|', $key, 2);
+            $parts = explode('|', $key);
+
+            if (count($parts) !== 4) {
+                continue;
+            }
+
+            [$date, $guardId, $start, $end] = $parts;
 
             EventShift::query()
                 ->where('event_id', $event->id)
                 ->whereDate('date', $date)
                 ->where('guard_id', (int) $guardId)
+                ->whereRaw("TIME_FORMAT(start_time, '%H:%i') = ?", [$start])
+                ->whereRaw("TIME_FORMAT(end_time, '%H:%i') = ?", [$end])
                 ->update(['cancelled_at' => $cancelledAt]);
         }
     }
 
     /**
-     * Toggle the soft-cancel state of a guard's shift on a date.
-     * Reversible; keyed by the stable business identity
-     * (event_id, date, guard_id), never the volatile shift id.
+     * Toggle the soft-cancel state of ONE shift (V5: single shift, not every
+     * shift the guard has that day). Reversible; keyed by the stable business
+     * identity (event, date, guard, start, end), never the volatile shift id.
+     *
+     * Older pages that do not send start/end fall back to the previous
+     * behaviour (every shift of that guard on that date) so nothing breaks
+     * for a page that was open during deployment.
      */
     public function toggleCancelShift(Request $request, Event $event)
     {
         $data = $request->validate([
             'date'     => 'required|date',
             'guard_id' => 'required|integer|exists:security_guards,id',
+            'start'    => 'nullable|date_format:H:i',
+            'end'      => 'nullable|date_format:H:i',
         ]);
 
         $date = Carbon::parse($data['date'])->toDateString();
         $guardId = (int) $data['guard_id'];
 
-        $shifts = EventShift::query()
-            ->where('event_id', $event->id)
-            ->whereDate('date', $date)
-            ->where('guard_id', $guardId)
-            ->get();
+        $scope = function () use ($event, $date, $guardId, $data) {
+            $q = EventShift::query()
+                ->where('event_id', $event->id)
+                ->whereDate('date', $date)
+                ->where('guard_id', $guardId);
+
+            if (!empty($data['start']) && !empty($data['end'])) {
+                $q->whereRaw("TIME_FORMAT(start_time, '%H:%i') = ?", [$data['start']])
+                  ->whereRaw("TIME_FORMAT(end_time, '%H:%i') = ?", [$data['end']]);
+            }
+
+            return $q;
+        };
+
+        $shifts = $scope()->get();
 
         if ($shifts->isEmpty()) {
             return back()->withErrors(['cancel' => 'No shift found for that guard on that date.']);
@@ -563,11 +697,7 @@ $locationValue = $assoc['location'] ?? $assoc['shift_location'] ?? $assoc['site_
 
         $currentlyCancelled = $shifts->every(fn ($s) => $s->cancelled_at !== null);
 
-        EventShift::query()
-            ->where('event_id', $event->id)
-            ->whereDate('date', $date)
-            ->where('guard_id', $guardId)
-            ->update(['cancelled_at' => $currentlyCancelled ? null : now()]);
+        $scope()->update(['cancelled_at' => $currentlyCancelled ? null : now()]);
 
         return back()->with('success', $currentlyCancelled ? 'Shift un-cancelled.' : 'Shift cancelled.');
     }
@@ -688,6 +818,10 @@ $locationValue = $assoc['location'] ?? $assoc['shift_location'] ?? $assoc['site_
     {
         $event->load(['assignmentSlots.securityGuard']);
 
+        // V5-P3: charge rate and expense only ever reach roles allowed to see them.
+        $canSeeCharge  = (bool) auth()->user()?->can('view-charge-rate');
+        $canSeeExpense = (bool) auth()->user()?->can('edit-guard-payments');
+
         $dailyGuards = collect($event->daily_guards ?? [])
             ->map(fn ($v) => (int) $v)
             ->toArray();
@@ -710,6 +844,9 @@ $locationValue = $assoc['location'] ?? $assoc['shift_location'] ?? $assoc['site_
 
             foreach ($dateSlots as $slot) {
                 $rows[] = [
+                    'shift_pay_rate'      => $slot->pay_rate,
+                    'shift_charge_rate'   => $canSeeCharge ? $slot->charge_rate : null,
+                    'shift_expense'       => $canSeeExpense ? $slot->expense : null,
                     'guard_id'            => $slot->guard_id,
                     'temp_phone'          => $slot->temp_phone,
                     'shift1_start'        => $slot->start_time,
@@ -741,13 +878,30 @@ $locationValue = $assoc['location'] ?? $assoc['shift_location'] ?? $assoc['site_
 
         return view('events.guards', [
             'event'       => $event,
+            // V5: City + mobile in the picker, only for roles allowed to see
+            // guard personal details (Moderator never receives them).
             'guards'      => SecurityGuard::query()
-                ->select('id', 'fullname', 'license_number', 'share_code_expiry')
+                ->select(array_merge(
+                    ['id', 'fullname', 'license_number', 'share_code_expiry', 'category'],
+                    \Illuminate\Support\Facades\Gate::allows('view-guard-details') ? ['phone_number', 'city'] : []
+                ))
                 ->orderBy('fullname')
                 ->get()
                 ->toArray(),
             'dailyGuards' => $dailyGuards,
             'assignments' => $assignments,
+            // V5-P3: defaults the per-shift boxes are pre-filled with. Charge rates
+            // are only sent to roles allowed to see them.
+            'eventRates'  => array_filter([
+                'pay'            => $event->pay_rate,
+                'pay_sia'        => $event->pay_rate_sia,
+                'pay_steward'    => $event->pay_rate_steward,
+                'charge'         => $canSeeCharge ? $event->charge_rate : null,
+                'charge_sia'     => $canSeeCharge ? $event->charge_rate_sia : null,
+                'charge_steward' => $canSeeCharge ? $event->charge_rate_steward : null,
+            ], fn ($v) => $v !== null),
+            'canSeeCharge'  => $canSeeCharge,
+            'canSeeExpense' => $canSeeExpense,
         ]);
     }
 
@@ -841,6 +995,9 @@ $locationValue = $assoc['location'] ?? $assoc['shift_location'] ?? $assoc['site_
             'assignments.*.*.shift1_start'    => 'nullable|date_format:H:i',
            'assignments.*.*.shift1_end'      => 'nullable|date_format:H:i',
             'assignments.*.*.break_hours'     => 'nullable|numeric|in:0,0.25,0.5,0.75,1',
+            'assignments.*.*.shift_pay_rate'    => 'nullable|numeric|min:0|max:9999.99',
+            'assignments.*.*.shift_charge_rate' => 'nullable|numeric|min:0|max:9999.99',
+            'assignments.*.*.shift_expense'     => 'nullable|numeric|min:0|max:99999999.99',
             'assignments.*.*.shift1_postcode'     => 'nullable|string|max:255',
             'assignments.*.*.shift1_site_name'    => 'nullable|string|max:255',
             'assignments.*.*.shift1_site_address' => 'nullable|string|max:255',
@@ -861,7 +1018,7 @@ $locationValue = $assoc['location'] ?? $assoc['shift_location'] ?? $assoc['site_
 
         $guardsById = SecurityGuard::query()
             ->whereIn('id', $requestedGuardIds)
-            ->get(['id', 'fullname', 'share_code_expiry'])
+            ->get(['id', 'fullname', 'share_code_expiry', 'category'])
             ->keyBy('id');
 
         foreach ($requestedGuardIds as $guardId) {
@@ -903,7 +1060,27 @@ $locationValue = $assoc['location'] ?? $assoc['shift_location'] ?? $assoc['site_
 
         $cancellationSnapshot = $this->snapshotCancellations($event);
 
-        DB::transaction(function () use ($validated, $event, $requestedGuardIds, $oldLocationByDateGuard, $cancellationSnapshot) {
+        // V5-P3: per-shift pay / charge / expense. Resolved BEFORE the slots are
+        // wiped, against the slot each row replaces (same date + slot_no), so
+        // fields the user may not edit are carried over untouched.
+        $oldSlotsByPosition = $event->assignmentSlots()->get()
+            ->keyBy(fn ($sl) => optional($sl->date)->toDateString() . '|' . (int) $sl->slot_no);
+
+        $moneyByPosition = [];
+        foreach ($validated['assignments'] as $mDate => $mRows) {
+            foreach (array_values($mRows) as $mIndex => $mRow) {
+                $mGuardId = $mRow['guard_id'] ?? null;
+                $moneyByPosition[$mDate . '|' . ($mIndex + 1)] = $this->resolveShiftMoney(
+                    $event,
+                    $mRow,
+                    $oldSlotsByPosition->get($mDate . '|' . ($mIndex + 1)),
+                    $mGuardId,
+                    $mGuardId ? $guardsById->get((int) $mGuardId)?->category : null
+                );
+            }
+        }
+
+        DB::transaction(function () use ($validated, $event, $requestedGuardIds, $oldLocationByDateGuard, $cancellationSnapshot, $moneyByPosition) {
             $event->assignmentSlots()->delete();
             $event->guards()->detach();
             $event->shifts()->delete();
@@ -921,6 +1098,9 @@ $locationValue = $assoc['location'] ?? $assoc['shift_location'] ?? $assoc['site_
                         'start_time'    => $row['shift1_start'] ?? null,
                         'end_time'      => $row['shift1_end'] ?? null,
                         'break_hours'   => $row['break_hours'] ?? 0,
+                        'pay_rate'      => $moneyByPosition[$date . '|' . ($index + 1)]['pay_rate'] ?? null,
+                        'charge_rate'   => $moneyByPosition[$date . '|' . ($index + 1)]['charge_rate'] ?? null,
+                        'expense'       => $moneyByPosition[$date . '|' . ($index + 1)]['expense'] ?? null,
                         'site_postcode' => $row['shift1_postcode'] ?? null,
                         'site_name'     => $row['shift1_site_name'] ?? null,
                         'site_address'  => $row['shift1_site_address'] ?? null,
@@ -934,7 +1114,7 @@ $locationValue = $assoc['location'] ?? $assoc['shift_location'] ?? $assoc['site_
             }
 
             foreach ($validated['assignments'] as $date => $rows) {
-                foreach ($rows as $row) {
+                foreach (array_values($rows) as $rowIndex => $row) {
                     $guardId = $row['guard_id'] ?? null;
 
                     if (!empty($guardId) && !empty($row['shift1_start']) && !empty($row['shift1_end'])) {
@@ -948,6 +1128,9 @@ $locationValue = $assoc['location'] ?? $assoc['shift_location'] ?? $assoc['site_
                             'start_time'    => $row['shift1_start'],
                             'end_time'      => $row['shift1_end'],
                             'break_hours'   => $row['break_hours'] ?? 0,
+                            'pay_rate'      => $moneyByPosition[$date . '|' . ($rowIndex + 1)]['pay_rate'] ?? null,
+                            'charge_rate'   => $moneyByPosition[$date . '|' . ($rowIndex + 1)]['charge_rate'] ?? null,
+                            'expense'       => $moneyByPosition[$date . '|' . ($rowIndex + 1)]['expense'] ?? null,
                             'shift_no'      => 1,
                             'site_postcode' => $row['shift1_postcode'] ?? null,
                             'site_name'     => $row['shift1_site_name'] ?? null,
@@ -1052,6 +1235,9 @@ $locationValue = $assoc['location'] ?? $assoc['shift_location'] ?? $assoc['site_
         'shift1_start'    => 'nullable|date_format:H:i',
         'shift1_end'      => 'nullable|date_format:H:i',
         'break_hours'     => 'nullable|numeric|in:0,0.25,0.5,0.75,1',
+        'shift_pay_rate'    => 'nullable|numeric|min:0|max:9999.99',
+        'shift_charge_rate' => 'nullable|numeric|min:0|max:9999.99',
+        'shift_expense'     => 'nullable|numeric|min:0|max:99999999.99',
         'shift1_postcode'     => 'nullable|string|max:255',
         'shift1_site_name'    => 'nullable|string|max:255',
         'shift1_site_address' => 'nullable|string|max:255',
@@ -1100,7 +1286,7 @@ $locationValue = $assoc['location'] ?? $assoc['shift_location'] ?? $assoc['site_
     if ($guardId) {
         $guard = SecurityGuard::query()
             ->whereKey($guardId)
-            ->first(['id', 'fullname', 'share_code_expiry']);
+            ->first(['id', 'fullname', 'share_code_expiry', 'category']);
 
         if ($guard) {
             $isExpired = !empty($guard->share_code_expiry)
@@ -1129,7 +1315,16 @@ $locationValue = $assoc['location'] ?? $assoc['shift_location'] ?? $assoc['site_
 
     $cancellationSnapshot = $this->snapshotCancellations($event);
 
-    DB::transaction(function () use ($event, $date, $slotNo, $guardId, $tempPhone, $startTime, $endTime, $breakHours, $location, $sitePostcode, $siteName, $siteAddress, $cancellationSnapshot) {
+    // V5-P3: per-shift pay / charge / expense (see resolveShiftMoney for who may change what).
+    $money = $this->resolveShiftMoney(
+        $event,
+        $validated,
+        $oldSlot,
+        $guardId,
+        $guardId ? SecurityGuard::query()->whereKey($guardId)->value('category') : null
+    );
+
+    DB::transaction(function () use ($event, $date, $slotNo, $guardId, $tempPhone, $startTime, $endTime, $breakHours, $location, $sitePostcode, $siteName, $siteAddress, $cancellationSnapshot, $money, $oldSlot) {
         $event->assignmentSlots()->updateOrCreate(
             [
                 'event_id' => $event->id,
@@ -1142,6 +1337,9 @@ $locationValue = $assoc['location'] ?? $assoc['shift_location'] ?? $assoc['site_
                 'start_time'    => $startTime,
                 'end_time'      => $endTime,
                 'break_hours'   => $breakHours,
+                'pay_rate'      => $money['pay_rate'],
+                'charge_rate'   => $money['charge_rate'],
+                'expense'       => $money['expense'],
                 'site_postcode' => $sitePostcode,
                 'site_name'     => $siteName,
                 'site_address'  => $siteAddress,
@@ -1149,11 +1347,36 @@ $locationValue = $assoc['location'] ?? $assoc['shift_location'] ?? $assoc['site_
             ]
         );
 
-        EventShift::query()
-            ->where('event_id', $event->id)
-            ->whereDate('date', $date)
-            ->where('shift_no', $slotNo)
-            ->delete();
+        /*
+         * V5: remove ONLY this slot's own previous shift.
+         *
+         * This used to delete every shift on the date with shift_no = slot_no.
+         * But "Save Assignments" (updateGuards) writes shift_no = 1 for every
+         * row, so after one of those, saving slot 1 here removed ALL guards'
+         * shifts for that date and re-created only this one. A shift's real
+         * identity is (event, date, guard, start, end), so that is what is
+         * matched: the shift the slot had before this save, plus any shift
+         * that already sits on the exact key about to be written (which would
+         * otherwise hit the unique index).
+         */
+        $removeShift = function (int $guard, $start, $end) use ($event, $date) {
+            if (!$guard || !$start || !$end) {
+                return;
+            }
+
+            EventShift::query()
+                ->where('event_id', $event->id)
+                ->whereDate('date', $date)
+                ->where('guard_id', $guard)
+                ->whereRaw("TIME_FORMAT(start_time, '%H:%i') = ?", [substr((string) $start, 0, 5)])
+                ->whereRaw("TIME_FORMAT(end_time, '%H:%i') = ?", [substr((string) $end, 0, 5)])
+                ->delete();
+        };
+
+        if ($oldSlot) {
+            $removeShift((int) $oldSlot->guard_id, $oldSlot->start_time, $oldSlot->end_time);
+        }
+        $removeShift((int) $guardId, $startTime, $endTime);
 
         if ($guardId && $startTime && $endTime) {
             EventShift::create([
@@ -1163,6 +1386,9 @@ $locationValue = $assoc['location'] ?? $assoc['shift_location'] ?? $assoc['site_
                 'start_time'    => $startTime,
                 'end_time'      => $endTime,
                 'break_hours'   => $breakHours,
+                'pay_rate'      => $money['pay_rate'],
+                'charge_rate'   => $money['charge_rate'],
+                'expense'       => $money['expense'],
                 'shift_no'      => $slotNo,
                 'site_postcode' => $sitePostcode,
                 'site_name'     => $siteName,
@@ -1502,6 +1728,9 @@ private function syncImportedSlotShift(Event $event, string $date, int $slotNo):
         'start_time' => $slot->start_time,
         'end_time' => $slot->end_time,
         'break_hours' => $slot->break_hours ?? 0,
+        'pay_rate' => $slot->pay_rate,
+        'charge_rate' => $slot->charge_rate,
+        'expense' => $slot->expense,
         'shift_no' => $slotNo,
         'location' => $slot->location,
     ]);
@@ -1650,9 +1879,11 @@ private function syncImportedSlotShift(Event $event, string $date, int $slotNo):
             ->map(fn ($id) => (int) $id)
             ->flip();
 
+        // V5: per exact shift (date|guard|start|end) so one of a guard's two
+        // same-day shifts can be cancelled without the other turning red.
         $cancelledShiftKeys = $event->shifts
             ->filter(fn ($s) => $s->cancelled_at !== null && $s->guard_id)
-            ->map(fn ($s) => optional($s->date)->toDateString() . '|' . (int) $s->guard_id)
+            ->map(fn ($s) => $this->shiftKey($s->date, $s->guard_id, $s->start_time, $s->end_time))
             ->flip();
 
         $assignmentRowsByDate = [];
@@ -1719,8 +1950,8 @@ private function syncImportedSlotShift(Event $event, string $date, int $slotNo):
 
     'issues'      => $rowIssues,
     'is_red'      => !empty($rowIssues),
-    'is_cancelled' => ($slot && $slot->guard_id)
-        ? $cancelledShiftKeys->has($date . '|' . (int) $slot->guard_id)
+    'is_cancelled' => ($slot && $slot->guard_id && $slot->start_time && $slot->end_time)
+        ? $cancelledShiftKeys->has($this->shiftKey($date, $slot->guard_id, $slot->start_time, $slot->end_time))
         : false,
     'is_invoiced' => ($slot && $slot->guard_id)
         ? ($clientInvoiceLocked || $lockedGuardInvoiceIds->has((int) $slot->guard_id))

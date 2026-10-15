@@ -115,6 +115,9 @@
                 <option value="name" {{ request('by') === 'name' ? 'selected' : '' }}>Name</option>
                 <option value="license" {{ request('by') === 'license' ? 'selected' : '' }}>License #</option>
                 <option value="email" {{ request('by') === 'email' ? 'selected' : '' }}>Email</option>
+                @can('view-guard-details')
+                <option value="details" {{ request('by') === 'details' ? 'selected' : '' }}>Phone / Address / City</option>
+                @endcan
             </select>
 
             <input type="text"

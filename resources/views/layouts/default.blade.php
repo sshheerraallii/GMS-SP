@@ -173,6 +173,12 @@
         Reports
     </a>
 @endcan
+@cannot('view-reports')
+    <a href="{{ route('reports.monthGuardPayments.index') }}"
+       class="{{ $navBase }} {{ request()->routeIs('reports.*') ? $active : $idle }}">
+        Month Wise Guard Payments
+    </a>
+@endcannot
 @can('manage-invoices')
     <a href="{{ route('invoices.index') }}"
        class="px-3 py-2 rounded-md transition
@@ -280,6 +286,12 @@
         Reports
     </a>
 @endcan
+@cannot('view-reports')
+    <a href="{{ route('reports.monthGuardPayments.index') }}"
+       class="{{ $mBase }} {{ request()->routeIs('reports.*') ? $mActive : $mIdle }}">
+        Month Wise Guard Payments
+    </a>
+@endcannot
 
 <a href="{{ route('chaseup.index') }}"
    class="{{ $mBase }} {{ request()->routeIs('chaseup.*') ? $mActive : $mIdle }}">

@@ -109,6 +109,12 @@
                     <div class="text-xs text-gray-500">Total pay</div>
                     <div class="font-semibold tabular-nums">{{ number_format($totals['amount'], 2) }}</div>
                 </div>
+                @if($canEdit)
+                    <div>
+                        <div class="text-xs text-gray-500">Total expense</div>
+                        <div class="font-semibold tabular-nums">{{ number_format($totals['expense'], 2) }}</div>
+                    </div>
+                @endif
                 <div>
                     <div class="text-xs text-gray-500">Events paid / unpaid</div>
                     <div class="font-semibold tabular-nums">{{ $totals['paid'] }} / {{ $totals['unpaid'] }}</div>
@@ -124,6 +130,13 @@
                    class="rounded bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700">
                     Export Excel
                 </a>
+                @if($guard)
+                    <a href="{{ route('reports.guardPayments.guardCopy', request()->query()) }}"
+                       class="rounded border border-blue-300 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-800 hover:bg-blue-100"
+                       title="Hours and sites only. No pay rate, amounts, totals or payment details.">
+                        Guard Copy PDF (no payments)
+                    </a>
+                @endif
             </div>
         </div>
         <p class="text-xs text-gray-400">
@@ -165,9 +178,12 @@
                                         <span class="ml-1 text-xs font-normal text-gray-500">{{ $ev['client_name'] }}</span>
                                     </div>
                                     <div class="flex items-center gap-3 text-xs text-gray-600">
-                                        <span>Rate <span class="font-semibold tabular-nums">{{ number_format($ev['pay_rate'], 2) }}</span></span>
+                                        <span>Rate <span class="font-semibold tabular-nums">{{ !empty($ev['rate_varies']) ? 'Varies' : number_format($ev['pay_rate'], 2) }}</span></span>
                                         <span>Hours <span class="font-semibold tabular-nums">{{ number_format($ev['hours'], 2) }}</span></span>
                                         <span>Pay <span class="font-semibold tabular-nums">{{ number_format($ev['amount'], 2) }}</span></span>
+                                        @if($canEdit)
+                                            <span>Expense <span class="font-semibold tabular-nums">{{ number_format($ev['expense'], 2) }}</span></span>
+                                        @endif
                                         @if($ev['invoice_status'])
                                             <span class="rounded-full bg-gray-100 px-2 py-0.5 uppercase tracking-wide">{{ $ev['invoice_status'] }}</span>
                                         @endif
@@ -201,6 +217,7 @@
                                                 <th class="px-2 py-1 text-right">Break</th>
                                                 <th class="px-2 py-1 text-right">Hours</th>
                                                 <th class="px-2 py-1 text-right">Amount</th>
+                                                @if($canEdit)<th class="px-2 py-1 text-right">Expense</th>@endif
                                                 <th class="px-2 py-1 text-left">Site</th>
                                             </tr>
                                         </thead>
@@ -213,6 +230,7 @@
                                                     <td class="px-2 py-1 text-right tabular-nums">{{ number_format($row['break'], 2) }}</td>
                                                     <td class="px-2 py-1 text-right tabular-nums">{{ number_format($row['hours'], 2) }}</td>
                                                     <td class="px-2 py-1 text-right tabular-nums">{{ number_format($row['amount'], 2) }}</td>
+                                                    @if($canEdit)<td class="px-2 py-1 text-right tabular-nums">{{ number_format($row['expense'], 2) }}</td>@endif
                                                     <td class="px-2 py-1 text-gray-500">{{ $row['location'] }}</td>
                                                 </tr>
                                             @endforeach

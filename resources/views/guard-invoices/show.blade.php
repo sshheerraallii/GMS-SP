@@ -26,7 +26,7 @@
 
                 <div>
                     Pay Rate Snapshot:
-                    <span class="font-medium text-gray-900">{{ number_format((float)$guardInvoice->pay_rate_snapshot, 2) }}</span>
+                    <span class="font-medium text-gray-900">{{ $guardInvoice->lines->pluck('rate')->map(fn ($r) => number_format((float) $r, 2))->unique()->count() > 1 ? 'Varies (see each line)' : number_format((float)$guardInvoice->pay_rate_snapshot, 2) }}</span>
                 </div>
             </div>
         </div>

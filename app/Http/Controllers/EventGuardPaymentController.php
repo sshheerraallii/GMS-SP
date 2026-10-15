@@ -33,6 +33,7 @@ class EventGuardPaymentController extends Controller
             'totals'   => [
                 'hours'  => round($rows->sum('total_hours'), 2),
                 'amount' => round($rows->sum('amount'), 2),
+                'expense' => round($rows->sum('expense'), 2),
             ],
             'canEdit'  => auth()->user()->can('edit-guard-payments'),
         ]);

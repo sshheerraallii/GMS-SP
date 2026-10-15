@@ -39,6 +39,10 @@
                         <th class="px-3 py-2 text-right font-semibold">Total Hours</th>
                         <th class="px-3 py-2 text-right font-semibold">Pay Rate</th>
                         <th class="px-3 py-2 text-right font-semibold">Amount</th>
+                        @if($canEdit)
+                            <th class="px-3 py-2 text-right font-semibold">Expense</th>
+                            <th class="px-3 py-2 text-right font-semibold">Total Payable</th>
+                        @endif
                         <th class="px-3 py-2 text-left font-semibold">Sort Code</th>
                         <th class="px-3 py-2 text-left font-semibold">Account Number</th>
                         <th class="px-3 py-2 text-left font-semibold">Beneficiary Name</th>
@@ -58,8 +62,12 @@
                                 @endif
                             </td>
                             <td class="px-3 py-2 text-right tabular-nums">{{ number_format($row['total_hours'], 2) }}</td>
-                            <td class="px-3 py-2 text-right tabular-nums">{{ number_format($row['pay_rate'], 2) }}</td>
+                            <td class="px-3 py-2 text-right tabular-nums">{{ number_format($row['pay_rate'], 2) }}@if($row['rate_varies'] ?? false) <span class="text-[10px] text-gray-400">avg</span>@endif</td>
                             <td class="px-3 py-2 text-right tabular-nums font-semibold">{{ number_format($row['amount'], 2) }}</td>
+                            @if($canEdit)
+                                <td class="px-3 py-2 text-right tabular-nums">{{ number_format($row['expense'], 2) }}</td>
+                                <td class="px-3 py-2 text-right tabular-nums font-semibold">{{ number_format($row['amount'] + $row['expense'], 2) }}</td>
+                            @endif
                             <td class="px-3 py-2">{{ $row['sort_code'] }}</td>
                             <td class="px-3 py-2">{{ $row['account_number'] }}</td>
                             <td class="px-3 py-2">{{ $row['beneficiary_name'] }}</td>
@@ -94,7 +102,7 @@
                         </tr>
                     @empty
                         <tr>
-                            <td colspan="11" class="px-3 py-6 text-center text-gray-500">
+                            <td colspan="{{ $canEdit ? 13 : 11 }}" class="px-3 py-6 text-center text-gray-500">
                                 No guards with shifts on this event.
                             </td>
                         </tr>
@@ -107,6 +115,10 @@
                             <td class="px-3 py-2 text-right tabular-nums">{{ number_format($totals['hours'], 2) }}</td>
                             <td></td>
                             <td class="px-3 py-2 text-right tabular-nums">{{ number_format($totals['amount'], 2) }}</td>
+                            @if($canEdit)
+                                <td class="px-3 py-2 text-right tabular-nums">{{ number_format($totals['expense'], 2) }}</td>
+                                <td class="px-3 py-2 text-right tabular-nums">{{ number_format($totals['amount'] + $totals['expense'], 2) }}</td>
+                            @endif
                             <td colspan="7"></td>
                         </tr>
                     </tfoot>

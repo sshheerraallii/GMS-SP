@@ -17,7 +17,7 @@
         <div class="text-right">
             <div class="text-xs text-gray-500">Pay Rate (Event)</div>
             <div class="text-base font-semibold text-gray-900 tabular-nums">
-                {{ number_format($payRate, 2) }}
+                {{ ($rateVaries ?? false) ? 'Varies' : number_format($payRate, 2) }}
             </div>
         </div>
     </div>
@@ -107,7 +107,7 @@
                         {{ number_format($totalHours, 2) }}
                     </td>
                     <td class="px-5 py-4 text-center tabular-nums text-gray-200">
-                        {{ number_format($payRate, 2) }}
+                        {{ ($rateVaries ?? false) ? 'Varies' : number_format($payRate, 2) }}
                     </td>
                     <td class="px-5 py-4 text-center tabular-nums font-bold">
                         {{ number_format($totalPay, 2) }}

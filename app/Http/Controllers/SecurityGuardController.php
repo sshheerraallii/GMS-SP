@@ -20,7 +20,11 @@ class SecurityGuardController extends Controller
         $perPage = (int) $request->get('per_page', 20);
 
         $q  = trim((string) $request->get('q', ''));
-        $by = (string) $request->get('by', 'all'); // all | name | license | email
+        $by = (string) $request->get('by', 'all'); // all | name | license | email | details
+
+        // Phone / address / city are personal details: only searchable by
+        // roles that may see them (Moderator may not).
+        $canSearchDetails = \Illuminate\Support\Facades\Gate::allows('view-guard-details');
 
         $driver = DB::connection()->getDriverName();
         $likeOp = $driver === 'pgsql' ? 'ilike' : 'like';
@@ -28,8 +32,15 @@ class SecurityGuardController extends Controller
         $query = SecurityGuard::query()->orderBy('created_at', 'desc');
 
         if ($q !== '') {
-            $query->where(function ($sub) use ($q, $by, $likeOp) {
+            $query->where(function ($sub) use ($q, $by, $likeOp, $canSearchDetails) {
                 $term = '%' . $q . '%';
+
+                if ($by === 'details' && $canSearchDetails) {
+                    $sub->where('phone_number', $likeOp, $term)
+                        ->orWhere('adresse', $likeOp, $term)
+                        ->orWhere('city', $likeOp, $term);
+                    return;
+                }
 
                 if ($by === 'name') {
                     $sub->where('fullname', $likeOp, $term);
@@ -49,6 +60,12 @@ class SecurityGuardController extends Controller
                 $sub->where('fullname', $likeOp, $term)
                     ->orWhere('license_number', $likeOp, $term)
                     ->orWhere('email_address', $likeOp, $term);
+
+                if ($canSearchDetails) {
+                    $sub->orWhere('phone_number', $likeOp, $term)
+                        ->orWhere('adresse', $likeOp, $term)
+                        ->orWhere('city', $likeOp, $term);
+                }
             });
         }
 

@@ -8,7 +8,10 @@
         @js($guards),
         '{{ $event->shift_mode }}',
         @js($assignments ?? []),
-        @js(auth()->user()->can('shifts.assign'))
+        @js(auth()->user()->can('shifts.assign')),
+        @js($eventRates ?? []),
+        @js((bool) ($canSeeCharge ?? false)),
+        @js((bool) ($canSeeExpense ?? false))
      )"
      x-init="init()">
 
@@ -65,7 +68,8 @@
 
     {{-- PER DATE TABLES --}}
     <template x-for="(count, date) in dailyGuards" :key="date">
-        <div class="mb-8 border rounded-lg p-4 bg-white">
+        {{-- V5: days with 0 guards required are hidden (still in the data; save already skips them) --}}
+        <div class="mb-8 border rounded-lg p-4 bg-white" x-show="Number(count) > 0">
 
             <div class="mb-3 flex items-center justify-between gap-3">
                <h3 class="font-semibold">
@@ -154,6 +158,7 @@
     <template x-for="opt in breakOptions" :key="'same-break-' + date + '-' + i + '-' + opt.value">
         <option
             :value="opt.value"
+            :selected="String(assignedGuards[date][i-1].breakHours) === opt.value"
             
             x-text="opt.label"></option>
     </template>
@@ -189,6 +194,7 @@
                                             </div>
                                         </div>
                                     </div>
+                                    @include('events.partials.shift-money-inputs')
                                     
                             {{-- Per shift save button --}}
         @can('shifts.assign')
@@ -240,6 +246,7 @@
     <template x-for="opt in breakOptions" :key="'diff-break-' + date + '-' + i + '-' + opt.value">
         <option
             :value="opt.value"
+            :selected="String(assignedGuards[date][i-1].breakHours) === opt.value"
             x-text="opt.label"></option>
     </template>
 </select>
@@ -272,6 +279,7 @@
                                                    :disabled="!canAssign">
                                         </div>
                                     </div>
+                                    @include('events.partials.shift-money-inputs')
                                     
                                      {{-- Per shift save button--}}
         @can('shifts.assign')
@@ -348,6 +356,9 @@
                             </div>
 
                             <div class="text-sm text-gray-500" x-text="'License: ' + (g.license_number || '—')"></div>
+                            <template x-if="g.phone_number !== undefined">
+                                <div class="text-sm text-gray-500" x-text="'Mobile: ' + (g.phone_number || '—') + '  ·  City: ' + (g.city || '—')"></div>
+                            </template>
 
                             <template x-if="g.share_code_expiry">
                                 <div class="text-xs text-gray-500" x-text="'Share-Code Expiry: ' + g.share_code_expiry"></div>
@@ -446,6 +457,9 @@
                             </div>
 
                             <div class="text-sm text-gray-500" x-text="'License: ' + (g.license_number || '—')"></div>
+                            <template x-if="g.phone_number !== undefined">
+                                <div class="text-sm text-gray-500" x-text="'Mobile: ' + (g.phone_number || '—') + '  ·  City: ' + (g.city || '—')"></div>
+                            </template>
 
                             <template x-if="g.share_code_expiry">
                                 <div class="text-xs text-gray-500" x-text="'Share-Code Expiry: ' + g.share_code_expiry"></div>
@@ -497,7 +511,7 @@
 @include('events.partials.import-additional-days')
 
 <script>
-function guardAssignment(dailyGuards, guards, shiftMode, existingAssignments, canAssign) {
+function guardAssignment(dailyGuards, guards, shiftMode, existingAssignments, canAssign, eventRates, canSeeCharge, canSeeExpense) {
     let assigned = {};
 
     for (let date in dailyGuards) {
@@ -510,7 +524,10 @@ function guardAssignment(dailyGuards, guards, shiftMode, existingAssignments, ca
             breakHours: '0',
             shift1Postcode: '',
             shift1SiteName: '',
-            shift1SiteAddress: ''
+            shift1SiteAddress: '',
+            payRate: '',
+            chargeRate: '',
+            expense: ''
         }));
     }
 
@@ -534,6 +551,9 @@ function guardAssignment(dailyGuards, guards, shiftMode, existingAssignments, ca
                 shift1Postcode: row.shift1_postcode || '',
                 shift1SiteName: row.shift1_site_name || '',
                 shift1SiteAddress: row.shift1_site_address || '',
+                payRate: (row.shift_pay_rate !== null && row.shift_pay_rate !== undefined && row.shift_pay_rate !== '') ? String(parseFloat(row.shift_pay_rate)) : '',
+                chargeRate: (row.shift_charge_rate !== null && row.shift_charge_rate !== undefined && row.shift_charge_rate !== '') ? String(parseFloat(row.shift_charge_rate)) : '',
+                expense: (row.shift_expense !== null && row.shift_expense !== undefined && row.shift_expense !== '') ? String(parseFloat(row.shift_expense)) : '',
             };
         });
     }
@@ -561,6 +581,31 @@ function guardAssignment(dailyGuards, guards, shiftMode, existingAssignments, ca
         guards,
         shiftMode,
         canAssign,
+        eventRates: eventRates || {},
+        canSeeCharge: !!canSeeCharge,
+        canSeeExpense: !!canSeeExpense,
+
+        // Mirrors Event::rateFor(): category rate if set, else the event base rate.
+        defaultRate(guardId, kind) {
+            const g = guardId ? this.guards.find(x => String(x.id) === String(guardId)) : null;
+            const cat = g ? String(g.category || '').toLowerCase().trim() : '';
+            const r = this.eventRates || {};
+            const suffix = (cat === 'sia' || cat === 'steward') ? cat : null;
+            let v = suffix ? r[kind + '_' + suffix] : undefined;
+            if (v === undefined || v === null || v === '') v = r[kind];
+            return (v === undefined || v === null || v === '') ? '0' : String(parseFloat(v));
+        },
+
+        // Pre-fill the rate boxes with the event default when no override is stored.
+        fillRateDefaults(row, force = false) {
+            if (force || row.payRate === '' || row.payRate === null || row.payRate === undefined) {
+                row.payRate = this.defaultRate(row.id, 'pay');
+            }
+            if (this.canSeeCharge && (force || row.chargeRate === '' || row.chargeRate === null || row.chargeRate === undefined)) {
+                row.chargeRate = this.defaultRate(row.id, 'charge');
+            }
+        },
+
         assignedGuards: assigned,
         savingRows: {},
 autosaveTimers: {},
@@ -611,6 +656,8 @@ autosaveTimers: {},
                     row.shift1Postcode = row.shift1Postcode ?? '';
                     row.shift1SiteName = row.shift1SiteName ?? '';
                     row.shift1SiteAddress = row.shift1SiteAddress ?? '';
+                    row.expense = row.expense ?? '';
+                    this.fillRateDefaults(row);
                 }
             }
 
@@ -641,7 +688,9 @@ autosaveTimers: {},
 
             return this.guards.filter(g =>
                 String(g.fullname).toLowerCase().includes(q) ||
-                String(g.license_number || '').toLowerCase().includes(q)
+                String(g.license_number || '').toLowerCase().includes(q) ||
+                String(g.phone_number || '').toLowerCase().includes(q) ||
+                String(g.city || '').toLowerCase().includes(q)
             );
         },
 
@@ -652,7 +701,9 @@ autosaveTimers: {},
 
             return this.guards.filter(g =>
                 String(g.fullname).toLowerCase().includes(q) ||
-                String(g.license_number || '').toLowerCase().includes(q)
+                String(g.license_number || '').toLowerCase().includes(q) ||
+                String(g.phone_number || '').toLowerCase().includes(q) ||
+                String(g.city || '').toLowerCase().includes(q)
             );
         },
 
@@ -766,6 +817,8 @@ autosaveTimers: {},
                 rows[rowIndex].id = selected.id;
                 rows[rowIndex].name = selected.fullname;
                 rows[rowIndex].tempPhone = ''; // a real guard replaces any temp guard
+                rows[rowIndex].expense = '';
+                this.fillRateDefaults(rows[rowIndex], true);
 
                 if (this.shiftMode === 'same') {
                     rows[rowIndex].shift1Start = this.globalShiftStart;
@@ -854,7 +907,9 @@ autosaveTimers: {},
                 id: selected.id,
                 name: selected.fullname,
                 breakHours: row.breakHours || '0',
+                expense: '',
             };
+            this.fillRateDefaults(this.assignedGuards[this.currentDate][this.currentIndex], true);
 
             if (this.shiftMode === 'same') {
                 this.assignedGuards[this.currentDate][this.currentIndex].shift1Start = this.globalShiftStart;
@@ -978,7 +1033,10 @@ saveRow(date, index) {
         shift1_postcode: row.shift1Postcode ? String(row.shift1Postcode).trim() : null,
         shift1_site_name: row.shift1SiteName ? String(row.shift1SiteName).trim() : null,
         shift1_site_address: row.shift1SiteAddress ? String(row.shift1SiteAddress).trim() : null,
+        shift_pay_rate: (row.payRate === '' || row.payRate === null || row.payRate === undefined) ? null : row.payRate,
     };
+    if (this.canSeeCharge) payload.shift_charge_rate = (row.chargeRate === '' || row.chargeRate === null || row.chargeRate === undefined) ? null : row.chargeRate;
+    if (this.canSeeExpense) payload.shift_expense = (row.expense === '' || row.expense === null || row.expense === undefined) ? null : row.expense;
 
     return fetch('{{ route('events.saveGuardSlot', $event->id) }}', {
         method: 'POST',
@@ -1038,7 +1096,8 @@ saveRow(date, index) {
             for (let date in this.assignedGuards) {
                 if (Number(this.dailyGuards[date]) === 0) continue;
 
-                payload.assignments[date] = this.assignedGuards[date].map(g => ({
+                payload.assignments[date] = this.assignedGuards[date].map(g => {
+                    const item = {
                     guard_id: g.id || null,
                     temp_phone: g.id ? null : (g.tempPhone ? String(g.tempPhone).trim() : null),
                     shift1_start: norm(g.shift1Start),
@@ -1047,7 +1106,12 @@ saveRow(date, index) {
                     shift1_postcode: g.shift1Postcode ? String(g.shift1Postcode).trim() : null,
                     shift1_site_name: g.shift1SiteName ? String(g.shift1SiteName).trim() : null,
                     shift1_site_address: g.shift1SiteAddress ? String(g.shift1SiteAddress).trim() : null,
-                }));
+                    shift_pay_rate: (g.payRate === '' || g.payRate === null || g.payRate === undefined) ? null : g.payRate,
+                    };
+                    if (this.canSeeCharge) item.shift_charge_rate = (g.chargeRate === '' || g.chargeRate === null || g.chargeRate === undefined) ? null : g.chargeRate;
+                    if (this.canSeeExpense) item.shift_expense = (g.expense === '' || g.expense === null || g.expense === undefined) ? null : g.expense;
+                    return item;
+                });
             }
 
             fetch('{{ route('events.updateGuards', $event->id) }}', {

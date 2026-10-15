@@ -60,6 +60,9 @@
                                 {{-- Expenses --}}
                                 <div>
                                     <div class="mb-1 text-xs font-semibold text-gray-700">Expenses (in range)</div>
+                                    @if(($ev['guard_expense'] ?? 0) > 0)
+                                        <div class="mb-1 text-xs text-gray-600">Guard shift expenses (paid to guards, included in total): <span class="font-medium">{{ number_format($ev['guard_expense'], 2) }}</span></div>
+                                    @endif
                                     @forelse($ev['expenses'] as $exp)
                                         <div class="flex items-center justify-between gap-2 border-b border-gray-100 py-1 text-xs">
                                             <div>

@@ -80,7 +80,9 @@ class GenerateDraftGuardInvoiceForEventGuard
                     (float) ($shift->break_hours ?? 0)
                 );
 
-                $amount = round($hours * $rate, 2);
+                // V5-P3: shift override → category rate → event base rate.
+                $lineRate = $shift->resolvedRate($event, $guard->category, 'pay');
+                $amount = round($hours * $lineRate, 2);
 
                 GuardInvoiceLine::create([
                     'guard_invoice_id' => $invoice->id,
@@ -90,7 +92,7 @@ class GenerateDraftGuardInvoiceForEventGuard
                     'shift_start'      => $shift->start_time,
                     'shift_end'        => $shift->end_time,
                     'hours'            => round($hours, 2),
-                    'rate'             => round($rate, 2),
+                    'rate'             => round($lineRate, 2),
                     'amount'           => $amount,
                 ]);
 

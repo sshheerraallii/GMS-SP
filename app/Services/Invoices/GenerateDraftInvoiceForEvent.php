@@ -157,8 +157,9 @@ class GenerateDraftInvoiceForEvent
                  * set produces byte-identical output to pre-V3. A slot only
                  * splits into multiple lines when the rates genuinely differ.
                  */
+                // V5-P3: shift override → category rate → event base rate.
                 $lineRate = round(
-                    $event->rateFor($guardCategories[$s->guard_id] ?? null, 'charge'),
+                    $s->resolvedRate($event, $guardCategories[$s->guard_id] ?? null, 'charge'),
                     2
                 );
 

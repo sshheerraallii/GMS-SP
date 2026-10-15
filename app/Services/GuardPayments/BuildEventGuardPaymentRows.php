@@ -6,7 +6,6 @@ use App\Models\Event;
 use App\Models\EventGuardPayment;
 use App\Models\EventShift;
 use Illuminate\Support\Collection;
-use Illuminate\Support\Facades\DB;
 
 /**
  * V3-P4: single source of truth for the guard pay & payment sheet rows.
@@ -22,48 +21,20 @@ class BuildEventGuardPaymentRows
 {
     public function handle(Event $event): Collection
     {
-        $shiftRows = EventShift::query()
-            ->from('event_shifts as es')
-            ->join('security_guards as sg', 'sg.id', '=', 'es.guard_id')
-            ->where('es.event_id', $event->id)
-            ->whereNull('es.cancelled_at')
-            ->whereNotNull('es.start_time')
-            ->whereNotNull('es.end_time')
-            ->select([
-                'es.guard_id',
-                'sg.fullname',
-                'sg.category',
-                'sg.sort_code',
-                'sg.account_number',
-                'sg.beneficiary_name',
-                DB::raw("
-                    SUM(
-                        GREATEST(
-                            (
-                                TIME_TO_SEC(
-                                    TIMEDIFF(
-                                        CASE
-                                            WHEN es.end_time >= es.start_time THEN es.end_time
-                                            ELSE ADDTIME(es.end_time, '24:00:00')
-                                        END,
-                                        es.start_time
-                                    )
-                                ) / 3600
-                            ) - COALESCE(es.break_hours, 0),
-                            0
-                        )
-                    ) AS total_hours
-                "),
-            ])
-            ->groupBy(
-                'es.guard_id',
-                'sg.fullname',
-                'sg.category',
-                'sg.sort_code',
-                'sg.account_number',
-                'sg.beneficiary_name'
-            )
-            ->orderBy('sg.fullname')
+        // V5-P3: shifts are read as models so per-shift pay-rate overrides and
+        // expenses are honoured (see ShiftPayCalculator for the exact rules).
+        $shifts = EventShift::query()
+            ->where('event_id', $event->id)
+            ->whereNull('cancelled_at')
+            ->whereNotNull('guard_id')
+            ->whereNotNull('start_time')
+            ->whereNotNull('end_time')
+            ->get()
+            ->groupBy('guard_id');
+
+        $guards = \App\Models\SecurityGuard::withTrashed()
+            ->whereIn('id', $shifts->keys()->all())
+            ->orderBy('fullname')
             ->get();
 
         $payments = EventGuardPayment::query()
@@ -71,26 +42,27 @@ class BuildEventGuardPaymentRows
             ->get()
             ->keyBy('guard_id');
 
-        return $shiftRows->map(function ($row) use ($event, $payments) {
-            $hours   = round((float) ($row->total_hours ?? 0), 2);
-            $rate    = $event->rateFor($row->category, 'pay');
-            $payment = $payments->get($row->guard_id);
+        return $guards->map(function ($guard) use ($event, $payments, $shifts) {
+            $calc    = ShiftPayCalculator::summarise($event, $guard->category, $shifts->get($guard->id, collect()));
+            $payment = $payments->get($guard->id);
 
             return [
-                'guard_id'         => (int) $row->guard_id,
-                'guard_name'       => $row->fullname ?? '',
-                'category'         => $row->category ?? '',
-                'total_hours'      => $hours,
-                'pay_rate'         => round($rate, 2),
-                'amount'           => round($hours * $rate, 2),
-                'sort_code'        => $row->sort_code ?? '',
-                'account_number'   => $row->account_number ?? '',
-                'beneficiary_name' => $row->beneficiary_name ?? '',
+                'guard_id'         => (int) $guard->id,
+                'guard_name'       => $guard->fullname ?? '',
+                'category'         => $guard->category ?? '',
+                'total_hours'      => $calc['hours'],
+                'pay_rate'         => $calc['rate'],
+                'rate_varies'      => $calc['rate_varies'],
+                'amount'           => $calc['amount'],
+                'expense'          => $calc['expense'],
+                'sort_code'        => $guard->sort_code ?? '',
+                'account_number'   => $guard->account_number ?? '',
+                'beneficiary_name' => $guard->beneficiary_name ?? '',
                 'paid_by'          => $payment?->paid_by ?? '',
                 'paid_from_account'=> $payment?->paid_from_account ?? '',
                 'paid_on'          => $payment?->paid_on?->format('Y-m-d') ?? '',
                 'remarks'          => $payment?->remarks ?? '',
             ];
-        });
+        })->values();
     }
 }

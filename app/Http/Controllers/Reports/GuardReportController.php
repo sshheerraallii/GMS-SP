@@ -77,10 +77,17 @@ class GuardReportController extends Controller
                 $rowsByDate[$dateKey] = [
                     'date' => $dateKey,
                     'hours' => 0,
+                    'pay_acc' => 0,
+                    'override' => false,
                 ];
             }
 
             $rowsByDate[$dateKey]['hours'] += $hours;
+            // V5-P3: per-shift pay rate (override -> category -> event rate).
+            $rowsByDate[$dateKey]['pay_acc'] += $hours * $shift->resolvedRate($event, $guard->category, 'pay');
+            if ($shift->pay_rate !== null && $shift->pay_rate !== '') {
+                $rowsByDate[$dateKey]['override'] = true;
+            }
         }
 
         $rows = collect($rowsByDate)
@@ -90,19 +97,28 @@ class GuardReportController extends Controller
                 // V3-P3: pay rate resolves from this guard's category.
                 $payRate = $event->rateForGuard($guard, 'pay');
                 $hours   = round((float) $r['hours'], 2);
-                $total   = round($hours * $payRate, 2);
+                // No override that day: original formula, unchanged figures.
+                $total   = $r['override'] ? round($r['pay_acc'], 2) : round($hours * $payRate, 2);
+                $dayRate = ($r['override'] && $hours > 0) ? round($total / $hours, 2) : round($payRate, 2);
 
                 return [
                     'date' => $r['date'],
                     'hours' => $hours,
-                    'pay_rate' => round($payRate, 2),
+                    'pay_rate' => $dayRate,
                     'total_pay' => $total,
                 ];
             });
 
         $totalHours = round($rows->sum('hours'), 2);
         $payRate    = round($event->rateForGuard($guard, 'pay'), 2);
-        $totalPay   = round($totalHours * $payRate, 2);
+        // V5-P3: with any per-shift override the total is the sum of the day
+        // rows; otherwise the original hours x rate figure (unchanged).
+        $anyOverride = $rows->contains(fn ($r) => abs($r['pay_rate'] - $payRate) > 0.0001);
+        $totalPay    = $anyOverride ? round($rows->sum('total_pay'), 2) : round($totalHours * $payRate, 2);
+        $rateVaries  = $rows->pluck('pay_rate')->unique()->count() > 1;
+        if (!$rateVaries && $rows->isNotEmpty()) {
+            $payRate = $rows->first()['pay_rate'];
+        }
 
         return view('reports.guards.show', [
             'guard' => $guard,
@@ -110,6 +126,7 @@ class GuardReportController extends Controller
             'rows' => $rows,
             'totalHours' => $totalHours,
             'payRate' => $payRate,
+            'rateVaries' => $rateVaries,
             'totalPay' => $totalPay,
         ]);
     }

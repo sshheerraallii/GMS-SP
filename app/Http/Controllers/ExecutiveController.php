@@ -366,15 +366,20 @@ class ExecutiveController extends Controller
             $hours  = 0.0;
             $pay    = 0.0;
             $charge = 0.0;
+            $guardExpense = 0.0;
 
             foreach ($shifts as $shift) {
                 $shiftHours = $this->shiftNetHours($shift);
                 $category   = $guardCategories[$shift->guard_id] ?? null;
 
                 $hours  += $shiftHours;
-                $pay    += $shiftHours * $event->rateFor($category, 'pay');
-                $charge += $shiftHours * $event->rateFor($category, 'charge');
+                // V5-P3: shift override -> category rate -> event base rate.
+                $pay    += $shiftHours * $shift->resolvedRate($event, $category, 'pay');
+                $charge += $shiftHours * $shift->resolvedRate($event, $category, 'charge');
+                // V5-P3: shift expense is paid to the guard on top of pay: a cost, never billed.
+                $guardExpense += (float) ($shift->expense ?? 0);
             }
+            $guardExpense = round($guardExpense, 2);
 
             $payRate = (float) ($event->pay_rate ?? 0);
             $pay     = round($pay, 2);
@@ -392,7 +397,8 @@ class ExecutiveController extends Controller
                 ->sortBy('date')
                 ->values();
 
-            $expTotal = round((float) $expenses->sum('amount'), 2);
+            // Event expenses plus guard shift expenses (V5-P3) are both costs.
+            $expTotal = round((float) $expenses->sum('amount') + $guardExpense, 2);
             $profit   = round($charge - $pay - $expTotal, 2);
 
             $rows[] = [
@@ -409,6 +415,7 @@ class ExecutiveController extends Controller
                 'charge'        => $charge,
                 'expenses'      => $expenses,
                 'expense_total' => $expTotal,
+                'guard_expense' => $guardExpense,
                 'profit'        => $profit,
             ];
 

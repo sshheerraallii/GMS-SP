@@ -78,5 +78,33 @@
     </tr>
 </table>
 
+@php
+    // V5: payment details for this guard on this event (same row the pay
+    // sheet and the Guard Payment Report edit).
+    $__pay = \App\Models\EventGuardPayment::query()
+        ->where('event_id', $guardInvoice->event_id)
+        ->where('guard_id', $guardInvoice->guard_id)
+        ->first();
+@endphp
+<table style="margin-top: 22px;">
+    <thead>
+        <tr><th colspan="4">Payment details</th></tr>
+    </thead>
+    <tbody>
+        <tr>
+            <td class="muted" style="width: 90px;">Paid by</td>
+            <td>{{ $__pay?->paid_by ?: '—' }}</td>
+            <td class="muted" style="width: 120px;">Paid from account</td>
+            <td>{{ $__pay?->paid_from_account ?: '—' }}</td>
+        </tr>
+        <tr>
+            <td class="muted">Paid on</td>
+            <td>{{ $__pay?->paid_on ? $__pay->paid_on->format('d M Y') : '—' }}</td>
+            <td class="muted">Remarks</td>
+            <td>{{ $__pay?->remarks ?: '—' }}</td>
+        </tr>
+    </tbody>
+</table>
+
 </body>
 </html>

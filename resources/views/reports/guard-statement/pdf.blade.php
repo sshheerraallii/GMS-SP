@@ -21,6 +21,7 @@
         .subtotal td { font-weight: bold; background: #fafafa; border-top: 1px solid #e5e7eb; }
         .grand { margin-top: 18px; border-top: 2px solid #111827; padding-top: 10px; }
         .grand-row { display: block; text-align: right; font-size: 14px; font-weight: bold; }
+        .pay { font-size: 10px; padding: 6px 10px; background: #fafafa; border-top: 1px solid #e5e7eb; color: #374151; }
         .empty { margin-top: 24px; color: #6b7280; font-style: italic; }
     </style>
 </head>
@@ -42,7 +43,7 @@
                 <div class="name">{{ $group['event_name'] }}</div>
                 <div class="sub">
                     Client: {{ $group['client_name'] }} &nbsp;|&nbsp;
-                    Pay rate: {{ number_format($group['pay_rate'], 2) }}/hr
+                    Pay rate: {{ !empty($group['rate_varies']) ? 'varies' : number_format($group['pay_rate'], 2) . '/hr' }}
                 </div>
             </div>
             <table>
@@ -54,6 +55,7 @@
                         <th class="num">Break</th>
                         <th class="num">Hours</th>
                         <th class="num">Amount</th>
+                        @if(!empty($showExpense))<th class="num">Expense</th>@endif
                     </tr>
                 </thead>
                 <tbody>
@@ -65,15 +67,23 @@
                             <td class="num">{{ $row['break'] }}</td>
                             <td class="num">{{ $row['hours'] }}</td>
                             <td class="num">{{ $row['amount'] }}</td>
+                            @if(!empty($showExpense))<td class="num">{{ $row['expense'] }}</td>@endif
                         </tr>
                     @endforeach
                     <tr class="subtotal">
                         <td colspan="4">Event subtotal</td>
                         <td class="num">{{ number_format($group['hours'], 2) }}</td>
                         <td class="num">{{ number_format($group['amount'], 2) }}</td>
+                        @if(!empty($showExpense))<td class="num">{{ number_format($group['expense'], 2) }}</td>@endif
                     </tr>
                 </tbody>
             </table>
+            <div class="pay">
+                Paid by: {{ $group['payment']['paid_by'] ?: '—' }}
+                &nbsp;|&nbsp; Paid from account: {{ $group['payment']['paid_from_account'] ?: '—' }}
+                &nbsp;|&nbsp; Paid on: {{ $group['payment']['paid_on'] ?: '—' }}
+                &nbsp;|&nbsp; Remarks: {{ $group['payment']['remarks'] ?: '—' }}
+            </div>
         </div>
     @empty
         <p class="empty">No shifts found for this guard in the selected filters.</p>
@@ -82,6 +92,7 @@
     <div class="grand">
         <span class="grand-row">Total hours: {{ $grandHours }}</span>
         <span class="grand-row">Total pay: {{ $grandAmount }}</span>
+        @if(!empty($showExpense))<span class="grand-row">Total expense: {{ $grandExpense }}</span>@endif
     </div>
 </div>
 </body>
